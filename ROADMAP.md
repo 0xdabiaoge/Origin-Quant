@@ -17,7 +17,7 @@
 - [x] OKX REST 适配器（公开行情 + 私有交易，三重实盘开关）
 - [x] FastAPI + 单页面板（净值、持仓、决策、成交、控制、回测）
 - [x] Argon2 / Bearer / loopback 三层认证
-- [x] 91 个测试、ruff 0 告警、mypy 0 错误
+- [x] 98 个测试、ruff 0 告警、mypy 0 错误
 - [x] 合成市场（regime-switching + OU 基差 + 资金费）
 - [x] `reconcile` 对账工具
 - [x] Docker / compose / systemd / CI

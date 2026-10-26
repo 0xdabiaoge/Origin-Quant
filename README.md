@@ -215,7 +215,7 @@ oq reconcile                    # 本地持仓 vs 交易所持仓
 测试与检查：
 
 ```bash
-.venv/Scripts/python.exe -m pytest -q          # 91 passed
+.venv/Scripts/python.exe -m pytest -q          # 98 passed
 .venv/Scripts/python.exe -m ruff check src tests
 .venv/Scripts/python.exe -m mypy src           # Success: no issues in 47 files
 ```
@@ -238,7 +238,7 @@ src/oq/
   backtest/             engine / data / metrics / report
   storage/              schema.sql / db / storage（事件 + 投影）
   app/                  api / auth / orchestrator / main / static
-tests/                  91 个测试：类型、组合、风控、执行、策略、回测不变量、存储、API、调度
+tests/                  98 个测试：类型、组合、风控、执行、策略、回测不变量、存储、API、调度、适配器
 deploy/                 systemd unit
 ```
 
