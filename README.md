@@ -151,17 +151,19 @@ qty = equity × risk_per_trade ÷ |entry − stop|
 在 **合成数据**（90 天、15m、10 个标的、regime-switching 因子 + OU 基差）上：
 
 ```
-start / end     10,000.00 -> 9,558.83        total return   -4.41%
-max drawdown    7.92%                        Sharpe        -1.50
-trades          655     win rate 50.8%       profit factor  0.94
+start / end     10,000.00 -> 9,554.89        total return   -4.45%
+max drawdown    7.91%                        Sharpe        -1.51
+trades          657     win rate 50.8%       profit factor  0.94
 avg win/loss R  +0.99R / -1.09R              expectancy    -0.030R
-fees / funding  1,517.80 / 65.89
+fees / funding  1,519.42 / 66.10
 ```
+
+（数字会随合成数据的起始时刻略有浮动，量级不变。）
 
 **解读：**
 
 - 毛利 ≈ +0.07R/笔，成本 ≈ 0.10R/笔 → 净 −0.03R/笔。**成本吃掉了全部毛利**。
-- 手续费 1,517.80 USD 对 10,000 USD 起始净值＝**15%**。这是 15m 周期、taker 双边 5bp 的必然结果。
+- 手续费 1,519.42 USD 对 10,000 USD 起始净值＝**15.2%**。这是 15m 周期、taker 双边 5bp 的必然结果。
 - 合成数据没有可利用结构（这就是「合成」的定义），所以这个结果**不是调参问题，是数学问题**。任何在合成数据上「调出」正收益的尝试，都只是把噪声拟合成了参数。
 
 **这不是失败，这是仪器读数正确。** 一个不能诚实报告亏损的回测器，没有资格报告盈利。
