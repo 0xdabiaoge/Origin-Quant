@@ -20,6 +20,7 @@ from decimal import Decimal
 
 import numpy as np
 
+from oq.clock import tf_to_ms
 from oq.config import Config
 from oq.data.ingest import Ingestor
 from oq.data.models import Quote
@@ -255,6 +256,11 @@ class Orchestrator:
         quotes: dict[str, Quote] = {}
         stale: set[str] = set()
         freshness_ms = self.config.data.staleness_seconds * 1000
+        # A bar carries its *open* time, so it only becomes usable one full
+        # interval later. Comparing now to the open time would make every
+        # symbol look stale for the whole bar, which silently stops paper
+        # trading between boundaries.
+        bar_ms = tf_to_ms(timeframe)
 
         for symbol in universe:
             try:
@@ -268,9 +274,21 @@ class Orchestrator:
             import numpy as np
 
             ts = frame["ts_ms"].to_numpy(dtype=np.int64)
-            if now - int(ts[-1]) > freshness_ms:
+            closed_ms = int(ts[-1]) + bar_ms
+            if now - closed_ms > freshness_ms:
                 stale.add(symbol)
                 continue
+            funding_frame = store.read_funding(symbol)
+            funding_ts = (
+                funding_frame["ts_ms"].to_numpy(dtype=np.int64)
+                if "ts_ms" in funding_frame
+                else None
+            )
+            funding_rates = (
+                funding_frame["rate"].to_numpy(dtype=np.float64)
+                if "rate" in funding_frame
+                else None
+            )
             views[symbol] = SymbolView(
                 symbol=symbol,
                 timeframe=timeframe,
@@ -281,8 +299,8 @@ class Orchestrator:
                 close=frame["close"].to_numpy(dtype=np.float64),
                 volume=frame["volume"].to_numpy(dtype=np.float64),
                 index=len(ts) - 1,
-                funding_rates=None,
-                funding_ts=None,
+                funding_rates=funding_rates,
+                funding_ts=funding_ts,
                 quote=quotes.get(symbol),
             )
         return views, quotes, stale

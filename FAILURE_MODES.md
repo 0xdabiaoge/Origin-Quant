@@ -66,7 +66,8 @@
 **现象**：K 线停止更新，策略仍在用最后一根 K 线做决策；或反过来，风控因数据过期拒绝了止损单。
 
 **处置**：
-- 入场闸门 `data_fresh` 检查 `now − last_bar_ts > staleness`（默认 180s）→ 拒绝开仓；
+- 入场闸门 `data_fresh` 检查 `now − (last_bar_ts + timeframe) > staleness`（默认 180s）→ 拒绝开仓；
+  新鲜度必须从**收盘**起算：K 线的 `ts_ms` 是开盘时间，若直接与 `now` 比较，会让每个标的在整个 K 线周期内都看起来「过期」；
 - **退出路径不检查数据新鲜度**（`_structural_gates`）→ 止损永远能执行；
 - 「读不到 ≠ 没有」：`_build_views` 找不到 parquet 时返回空，`data_ok=False`，而不是假设价格未变。
 
