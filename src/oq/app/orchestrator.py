@@ -220,24 +220,33 @@ class Orchestrator:
 
     # -- helpers -------------------------------------------------------
     def _finish(self, report: CycleReport, now: int) -> None:
-        self.journal.record_event(
-            EventType.CYCLE_END,
-            {
-                "cycle_id": report.cycle_id,
-                "intents": report.intents,
-                "approved": report.approved,
-                "rejected": report.rejected,
-                "fills": report.fills,
-                "errors": report.errors,
-                "skipped": report.skipped,
-                "equity": str(report.equity),
-            },
-            ts_ms=now,
-            cycle_id=report.cycle_id,
-        )
+        """Close the cycle and make every in-memory change durable in one commit.
 
-    def _conn(self):
-        return self.db.connect()
+        The portfolio is mutated in place by fills, funding and marking, so it
+        has to be written here. Persisting only the event used to leave the
+        ledger claiming work that the projections never recorded: funding was
+        applied in memory, its "already charged" marker was committed, and the
+        money vanished on the next load.
+        """
+        with self.db.tx() as conn:
+            self.store.emit(
+                conn,
+                EventType.CYCLE_END,
+                {
+                    "cycle_id": report.cycle_id,
+                    "intents": report.intents,
+                    "approved": report.approved,
+                    "rejected": report.rejected,
+                    "fills": report.fills,
+                    "errors": report.errors,
+                    "skipped": report.skipped,
+                    "equity": str(report.equity),
+                },
+                ts_ms=now,
+                cycle_id=report.cycle_id,
+            )
+            self.store.sync_positions(conn, self.portfolio)
+            self.store.save_portfolio_state(conn, self.portfolio)
 
     def _views_for(self, views: Mapping[str, SymbolView], book: Book) -> dict[str, SymbolView]:
         universe = self.config.universe_map()
@@ -256,11 +265,18 @@ class Orchestrator:
         quotes: dict[str, Quote] = {}
         stale: set[str] = set()
         freshness_ms = self.config.data.staleness_seconds * 1000
-        # A bar carries its *open* time, so it only becomes usable one full
-        # interval later. Comparing now to the open time would make every
-        # symbol look stale for the whole bar, which silently stops paper
-        # trading between boundaries.
         bar_ms = tf_to_ms(timeframe)
+        # The newest bar that *should* already be closed. A bar stamped `ts`
+        # covers [ts, ts+bar) and closes at ts+bar, so at time `now` the newest
+        # closed bar is the one that opened at floor(now)-bar.
+        #
+        # Staleness therefore means "a bar we should already have is missing",
+        # not "the last close was more than N seconds ago". The latter would
+        # only be true in the few seconds after each boundary and would make
+        # the engine refuse to trade for the rest of the bar.
+        expected_open_ms = (now // bar_ms) * bar_ms - bar_ms
+        # Grace: the venue may publish the bar a little after the boundary.
+        publish_deadline_ms = (now // bar_ms) * bar_ms + freshness_ms
 
         for symbol in universe:
             try:
@@ -274,8 +290,9 @@ class Orchestrator:
             import numpy as np
 
             ts = frame["ts_ms"].to_numpy(dtype=np.int64)
-            closed_ms = int(ts[-1]) + bar_ms
-            if now - closed_ms > freshness_ms:
+            last_open_ms = int(ts[-1])
+            missing_bar = last_open_ms < expected_open_ms
+            if missing_bar and now > publish_deadline_ms:
                 stale.add(symbol)
                 continue
             funding_frame = store.read_funding(symbol)
@@ -321,21 +338,56 @@ class Orchestrator:
         return out
 
     def _apply_due_funding(self, now: int, marks: Mapping[str, Decimal]) -> None:
+        """Charge every funding settlement that fell due since the last cycle.
+
+        Applied only to the carry book: directional swaps pay funding too, but
+        their holding period is short enough that mixing it in obscures the
+        carry PnL.
+
+        The per-symbol "already charged" marker, the funding rows and the
+        portfolio state commit together. Writing the marker on its own would
+        make an interrupted cycle lose the payment permanently while refusing
+        to charge it again.
+        """
         store = ParquetStore(self.config.data.parquet_dir)
+        applied: list[tuple[int, str, Book, Decimal, Decimal]] = []
+
         for position in self.portfolio.positions_of(Book.CARRY):
             last = int(self.store.get_kv(f"funding:{position.symbol}", 0) or 0)
-            points = store.read_funding(position.symbol)
-            for point in points:
-                if point.ts_ms <= last or point.ts_ms > now:
+            frame = store.read_funding(position.symbol)
+            if frame is None or frame.empty or "ts_ms" not in frame:
+                continue
+            for raw_ts, raw_rate in zip(
+                frame["ts_ms"].to_numpy(dtype=np.int64),
+                frame["rate"].to_numpy(dtype=np.float64),
+                strict=False,
+            ):
+                ts_ms = int(raw_ts)
+                if ts_ms <= last or ts_ms > now:
                     continue
-                amount = (
-                    -position.qty * (marks.get(position.symbol) or position.avg_px) * point.rate
+                rate = D(float(raw_rate))
+                amount = -position.qty * (marks.get(position.symbol) or position.avg_px) * rate
+                self.portfolio.apply_funding(position.symbol, position.book, amount, ts_ms)
+                applied.append((ts_ms, position.symbol, position.book, amount, rate))
+
+        if not applied:
+            return
+
+        with self.db.tx() as conn:
+            for ts_ms, symbol, book, amount, rate in applied:
+                self.store.save_funding(
+                    conn, ts_ms=ts_ms, symbol=symbol, book=book, amount=amount, rate=rate
                 )
-                self.portfolio.apply_funding(position.symbol, position.book, amount, point.ts_ms)
-                self.journal.record_funding(
-                    point.ts_ms, position.symbol, position.book, amount, point.rate
+                self.store.emit(
+                    conn,
+                    EventType.FUNDING,
+                    {"symbol": symbol, "amount": str(amount), "rate": str(rate)},
+                    ts_ms=ts_ms,
+                    symbol=symbol,
                 )
-                self.store.set_kv(self._conn(), f"funding:{position.symbol}", point.ts_ms)
+                self.store.set_kv(conn, f"funding:{symbol}", ts_ms)
+            self.store.sync_positions(conn, self.portfolio)
+            self.store.save_portfolio_state(conn, self.portfolio)
 
     def _check_drawdown(self, risk_ctx: RiskContext, now: int) -> None:
         risk = self.config.risk
