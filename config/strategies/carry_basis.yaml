@@ -1,0 +1,19 @@
+id: carry_basis
+enabled: true
+book: carry
+timeframe: 15m
+params:
+  # Enter when the 8h funding rate is rich enough to pay for the round trip
+  # within a few settlements, and the basis is not already stretched.
+  entry_funding_bps: 1.0
+  exit_funding_bps: 0.15
+  max_basis_bps: 20
+  min_basis_bps: -8
+  rebalance_hours: 8
+  notional_per_leg_pct: 0.12
+  max_pairs: 2
+  pairs:
+    - spot: BTC-USDT
+      perp: BTC-USDT-SWAP
+    - spot: ETH-USDT
+      perp: ETH-USDT-SWAP

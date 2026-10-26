@@ -1,0 +1,19 @@
+id: trend_donchian
+enabled: true
+book: directional
+timeframe: 15m
+params:
+  entry_lookback: 48        # 12h on 15m
+  exit_lookback: 24
+  atr_period: 14
+  ema_fast: 21
+  ema_slow: 55
+  ema_trend: 200
+  atr_stop_mult: 2.0
+  min_atr_pct: 0.004
+  max_atr_pct: 0.05
+  vol_target_pct: 0.015     # annualised portfolio-vol contribution target
+  tp1_r: 1.5
+  tp2_r: 3.0
+  time_stop_bars: 32
+  max_signals_per_cycle: 2

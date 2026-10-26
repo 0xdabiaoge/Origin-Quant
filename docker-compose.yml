@@ -1,0 +1,35 @@
+services:
+  engine:
+    build: .
+    image: origin-quant:0.1.0
+    container_name: origin-quant
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      OQ_CONFIG_DIR: /app/config
+      OQ_DB_PATH: /app/data/origin.db
+      OQ_DATA_DIR: /app/data
+    ports:
+      # Bind to loopback only. Put a TLS reverse proxy in front for remote access.
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - oq-data:/app/data
+      - ./config:/app/config:ro
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 1g
+    pids_limit: 256
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  oq-data:

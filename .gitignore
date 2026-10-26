@@ -1,0 +1,32 @@
+# runtime state
+data/*
+!data/.gitkeep
+logs/*
+!logs/.gitkeep
+backups/
+.env
+.env.*
+!.env.example
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# node
+node_modules/
+web/dist/
+web/.vite/
+
+# editors / os
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

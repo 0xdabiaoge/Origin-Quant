@@ -1,0 +1,48 @@
+[Unit]
+Description=Origin Quant trading engine
+Documentation=file:///opt/origin-quant/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=oq
+Group=oq
+WorkingDirectory=/opt/origin-quant
+EnvironmentFile=/etc/origin-quant/env
+Environment=OQ_CONFIG_DIR=/opt/origin-quant/config
+Environment=OQ_DB_PATH=/var/lib/origin-quant/origin.db
+Environment=OQ_DATA_DIR=/var/lib/origin-quant
+
+ExecStartPre=/opt/origin-quant/.venv/bin/oq init-db
+ExecStart=/opt/origin-quant/.venv/bin/oq serve --host 127.0.0.1 --port 8000 --scheduler
+Restart=on-failure
+RestartSec=5
+
+# A trading process must die rather than thrash.
+MemoryMax=1G
+TasksMax=256
+TimeoutStopSec=30
+KillSignal=SIGTERM
+
+# Hardening: the engine needs its data dir and nothing else.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+ReadWritePaths=/var/lib/origin-quant
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=origin-quant
+
+[Install]
+WantedBy=multi-user.target

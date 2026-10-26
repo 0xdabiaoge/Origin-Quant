@@ -1,0 +1,150 @@
+# Origin Quant - base configuration.
+# Secrets never live here; see .env.example.
+
+app:
+  name: Origin Quant
+  mode: paper            # backtest | paper | live
+  paper_cash: 10000      # starting balance for a fresh paper account
+  timezone: Asia/Shanghai
+  log_level: INFO
+  data_dir: data
+  db_path: data/origin.db
+  base_currency: USDT
+  live_trading: false    # must also be enabled by OQ_LIVE=1 and mode=live
+  cycle_grace_seconds: 15
+
+venues:
+  okx:
+    enabled: true
+    demo: true           # demo trading header x-simulated-trading: 1
+    rest_base: https://www.okx.com
+    ws_public: wss://ws.okx.com:8443/ws/v5/public
+    ws_private: wss://ws.okx.com:8443/ws/v5/private
+    timeout_s: 10.0
+    max_retries: 3
+    rate_limit_per_sec: 8
+
+data:
+  parquet_dir: data/parquet
+  timeframe: 15m
+  warmup_bars: 220
+  staleness_seconds: 180
+  max_spread_bps: 25
+  min_quote_volume_usd: 5000000
+
+# Sizes are expressed in BASE currency units (not contracts).
+# contract_value converts to venue contracts: contracts = base_qty / contract_value.
+instruments:
+  - symbol: BTC-USDT-SWAP
+    inst_type: SWAP
+    base: BTC
+    tick_size: 0.1
+    lot_size: 0.0001        # 0.01 contracts x 0.01 BTC
+    min_size: 0.0001
+    contract_value: 0.01
+    maker_fee: 0.0002
+    taker_fee: 0.0005
+    max_leverage: 20
+  - symbol: ETH-USDT-SWAP
+    inst_type: SWAP
+    base: ETH
+    tick_size: 0.01
+    lot_size: 0.001
+    min_size: 0.001
+    contract_value: 0.1
+    maker_fee: 0.0002
+    taker_fee: 0.0005
+    max_leverage: 20
+  - symbol: SOL-USDT-SWAP
+    inst_type: SWAP
+    base: SOL
+    tick_size: 0.01
+    lot_size: 0.01
+    min_size: 0.01
+    contract_value: 1
+    maker_fee: 0.0002
+    taker_fee: 0.0005
+    max_leverage: 20
+  - symbol: XRP-USDT-SWAP
+    inst_type: SWAP
+    base: XRP
+    tick_size: 0.0001
+    lot_size: 1
+    min_size: 1
+    contract_value: 100
+    maker_fee: 0.0002
+    taker_fee: 0.0005
+    max_leverage: 20
+  - symbol: DOGE-USDT-SWAP
+    inst_type: SWAP
+    base: DOGE
+    tick_size: 0.00001
+    lot_size: 10
+    min_size: 10
+    contract_value: 1000
+    maker_fee: 0.0002
+    taker_fee: 0.0005
+    max_leverage: 20
+  - symbol: LINK-USDT-SWAP
+    inst_type: SWAP
+    base: LINK
+    tick_size: 0.001
+    lot_size: 0.01
+    min_size: 0.01
+    contract_value: 1
+    maker_fee: 0.0002
+    taker_fee: 0.0005
+    max_leverage: 20
+  - symbol: ARB-USDT-SWAP
+    inst_type: SWAP
+    base: ARB
+    tick_size: 0.0001
+    lot_size: 0.1
+    min_size: 0.1
+    contract_value: 10
+    maker_fee: 0.0002
+    taker_fee: 0.0005
+    max_leverage: 20
+  - symbol: SUI-USDT-SWAP
+    inst_type: SWAP
+    base: SUI
+    tick_size: 0.0001
+    lot_size: 0.01
+    min_size: 0.01
+    contract_value: 1
+    maker_fee: 0.0002
+    taker_fee: 0.0005
+    max_leverage: 20
+  # Spot legs for the carry book.
+  - symbol: BTC-USDT
+    inst_type: SPOT
+    base: BTC
+    tick_size: 0.1
+    lot_size: 0.00001
+    min_size: 0.00001
+    contract_value: 1
+    maker_fee: 0.0008
+    taker_fee: 0.001
+    max_leverage: 1
+  - symbol: ETH-USDT
+    inst_type: SPOT
+    base: ETH
+    tick_size: 0.01
+    lot_size: 0.0001
+    min_size: 0.0001
+    contract_value: 1
+    maker_fee: 0.0008
+    taker_fee: 0.001
+    max_leverage: 1
+
+universe:
+  - { symbol: BTC-USDT-SWAP, book: directional, books: [directional, carry], cluster: majors }
+  - { symbol: ETH-USDT-SWAP, book: directional, books: [directional, carry], cluster: majors }
+  - { symbol: SOL-USDT-SWAP, book: directional, cluster: l1 }
+  - { symbol: XRP-USDT-SWAP, book: directional, cluster: payments }
+  - { symbol: DOGE-USDT-SWAP, book: directional, cluster: payments }
+  - { symbol: LINK-USDT-SWAP, book: directional, cluster: defi }
+  - { symbol: ARB-USDT-SWAP, book: directional, cluster: defi }
+  - { symbol: SUI-USDT-SWAP, book: directional, cluster: l1 }
+  - { symbol: BTC-USDT, book: carry, cluster: majors }
+  - { symbol: ETH-USDT, book: carry, cluster: majors }

@@ -1,0 +1,33 @@
+# Risk parameters.  Every value here is read by oq.risk; tests assert that
+# no key is dead weight (see tests/test_config.py::test_every_risk_key_is_used).
+
+# Fraction of equity risked between entry and stop.
+risk_per_trade_pct: 0.0025
+
+# Sum of open risk across all books, as a fraction of equity.
+max_portfolio_heat_pct: 0.02
+max_book_heat_pct:
+  carry: 0.012
+  directional: 0.008
+
+max_gross_leverage: 2.0
+max_symbol_exposure_pct: 0.25
+max_cluster_exposure_pct: 0.40
+max_open_positions: 8
+max_per_book: 6
+
+# Drawdown ladder.  halt = stop opening; flatten = close everything.
+daily_loss_halt_pct: 0.015
+daily_loss_flatten_pct: 0.025
+weekly_loss_halve_pct: 0.04
+max_drawdown_pct: 0.10
+
+reentry_cooldown_minutes: 60
+stop_cooldown_minutes: 30
+min_stop_atr_mult: 1.2
+max_stop_atr_mult: 4.0
+min_rr: 1.2
+min_cost_edge_multiple: 3.0
+max_slippage_bps: 10
+max_order_notional_pct: 0.35
+reduce_only_on_exit: true

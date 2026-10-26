@@ -1,0 +1,87 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "origin-quant"
+version = "0.1.0"
+description = "Origin Quant - a single-operator crypto trading system with a deterministic kernel."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Origin Quant" }]
+dependencies = [
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.27",
+  "httpx>=0.27",
+  "websockets>=12",
+  "pydantic>=2.6",
+  "pydantic-settings>=2.2",
+  "PyYAML>=6.0",
+  "pandas>=2.0",
+  "numpy>=1.26",
+  "pyarrow>=15",
+  "argon2-cffi>=23",
+  "itsdangerous>=2.1",
+  "python-multipart>=0.0.9",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "hypothesis>=6", "ruff>=0.4", "mypy>=1.9"]
+research = ["duckdb>=0.10", "polars>=0.20", "matplotlib>=3.8"]
+
+[project.scripts]
+oq = "oq.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+oq = ["app/static/*", "app/static/**/*", "storage/*.sql"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+# Rules suppressed on purpose, with the reason next to each:
+ignore = [
+  # Lazy imports break the config -> storage -> strategy import cycle and keep
+  # CLI startup fast; hoisting them would be worse, not better.
+  "PLC0415",
+  # FastAPI declares dependencies in default arguments; that is the idiom.
+  "B008",
+  # Protocol implementations and callbacks legitimately ignore arguments.
+  "ARG001", "ARG002", "ARG003",
+  # `str, Enum` (not StrEnum) keeps .value semantics used across the ledger.
+  "UP042",
+  # Branch-heavy gate pipelines and parsers read better with early returns.
+  "PLR0911", "PLR0912", "PLR0913", "PLR0915", "PLR0917",
+  # `value != value` is the NaN test, not a mistake.
+  "PLR0124",
+  "C408", "SIM105", "SIM108", "PLW2901", "PLW0108", "B007",
+  # Venue, CLI and journal boundaries deliberately catch everything: a network
+  # adapter must never let an unexpected exception unwind the order loop.
+  "BLE001",
+  # `Decimal` constants (D("1.5")) are immutable, so a call in a default is safe.
+  "RUF009",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501", "PLR2004", "ARG001", "F401"]
+select = ["E", "F", "I", "UP", "B", "SIM", "C4", "PIE", "RET", "ARG", "PL"]
+ignore = ["PLR0913", "PLR0912", "PLR0915", "PLR2004", "ARG002"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+asyncio_mode = "auto"
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.mypy]
+python_version = "3.11"
+packages = ["oq"]
+strict = false
+warn_unused_ignores = true
+ignore_missing_imports = true
