@@ -1,7 +1,10 @@
 services:
   engine:
+    # Published by .github/workflows/release.yml as ghcr.io/0xdabiaoge/origin-quant:v1.0.x
+    # Server:  docker compose pull && docker compose up -d
+    # Local:   OQ_IMAGE_TAG=dev docker compose build   (or just `docker compose build`)
+    image: ghcr.io/0xdabiaoge/origin-quant:${OQ_IMAGE_TAG:-latest}
     build: .
-    image: origin-quant:0.1.0
     container_name: origin-quant
     restart: unless-stopped
     env_file:

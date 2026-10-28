@@ -1,6 +1,18 @@
 # syntax=docker/dockerfile:1.7
 FROM python:3.11-slim AS base
 
+# Stamped by the release workflow (v1.0.0, v1.0.1, ...). Defaults to a clearly
+# non-release value so a local build can never be mistaken for a published one.
+ARG OQ_VERSION=0.0.0-dev
+ARG OQ_REVISION=unknown
+
+LABEL org.opencontainers.image.title="Origin Quant" \
+      org.opencontainers.image.description="Single-operator crypto trading engine" \
+      org.opencontainers.image.version="${OQ_VERSION}" \
+      org.opencontainers.image.revision="${OQ_REVISION}" \
+      org.opencontainers.image.source="https://github.com/0xdabiaoge/Origin-Quant" \
+      org.opencontainers.image.licenses="UNLICENSED"
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
@@ -32,7 +44,8 @@ USER 10001:10001
 ENV OQ_CONFIG_DIR=/app/config \
     OQ_DB_PATH=/app/data/origin.db \
     OQ_DATA_DIR=/app/data \
-    OQ_LOG_LEVEL=INFO
+    OQ_LOG_LEVEL=INFO \
+    OQ_VERSION=${OQ_VERSION}
 
 EXPOSE 8000
 

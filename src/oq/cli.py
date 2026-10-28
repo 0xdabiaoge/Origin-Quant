@@ -29,7 +29,7 @@ from oq.execution.okx_adapter import OkxAdapter, build_rest
 from oq.storage import Database, Store
 from oq.strategy.registry import build_position_manager, build_strategies
 from oq.types import D
-from oq.version import __version__
+from oq.version import app_version, code_version
 
 log = logging.getLogger("oq")
 
@@ -238,7 +238,8 @@ def cmd_reconcile(args: argparse.Namespace, config: Config) -> int:
 
 
 def cmd_version(args: argparse.Namespace, config: Config | None) -> int:
-    print(f"origin-quant {__version__}")
+    print(f"origin-quant {app_version()}")
+    print(f"build        {code_version()}")
     return 0
 
 

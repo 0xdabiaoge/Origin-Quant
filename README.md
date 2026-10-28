@@ -241,12 +241,80 @@ src/oq/
   storage/              schema.sql / db / storage（事件 + 投影）
   app/                  api / auth / orchestrator / main / static
 tests/                  98 个测试：类型、组合、风控、执行、策略、回测不变量、存储、API、调度、适配器
-deploy/                 systemd unit
+deploy/                 systemd unit（裸机部署用）
+.github/workflows/      ci.yml（三平台测试 + 构建验证）、release.yml（打 tag 推 GHCR）
 ```
 
 ---
 
-## 10. 已知限制
+## 10. 部署（镜像 → VPS）
+
+版本由 git tag 数量推导，不需要手动改号：
+
+```
+已有 v1.* tag 数     版本
+        0         v1.0.0     ← 首次构建
+        1         v1.0.1
+       99         v1.0.99
+      100         v1.1.0     ← 满 99 进一
+```
+
+`.github/workflows/release.yml` 在每次 `main` 的 ci 通过后自动：
+
+1. 数一遍已有 tag，算出下一个版本号；
+2. 用 buildx 构建 `linux/amd64` + `linux/arm64` 双架构镜像；
+3. 推到 `ghcr.io/0xdabiaoge/origin-quant:v1.0.x` 和 `:latest`；
+4. 给这次构建的提交打上 `v1.0.x` 标签。
+
+版本号同时写进镜像 label 和容器内的 `OQ_VERSION`，所以：
+
+```bash
+docker exec origin-quant oq version
+# origin-quant 1.0.3
+# build        1.0.3+18ba007e37f4
+```
+
+### VPS 上首次部署
+
+```bash
+git clone https://github.com/0xdabiaoge/Origin-Quant.git
+cd Origin-Quant
+cp .env.example .env && $EDITOR .env      # OQ_MODE=paper, OQ_LIVE=0
+docker compose pull && docker compose up -d
+curl -fsS http://127.0.0.1:8000/api/health
+```
+
+如果 GHCR 镜像设为私有，先登录一次（`read:packages` 权限的 PAT）：
+
+```bash
+echo "$GHCR_TOKEN" | docker login ghcr.io -u 0xdabiaoge --password-stdin
+```
+
+### 拉取新版本
+
+发布流水线跑完后，它的 Summary 会直接给出要复制的两行。手动的话：
+
+```bash
+cd Origin-Quant
+git pull                                   # 拿到新的 compose / config
+OQ_IMAGE_TAG=v1.0.4 docker compose pull
+OQ_IMAGE_TAG=v1.0.4 docker compose up -d
+docker exec origin-quant oq version        # 确认跑的是新版本
+```
+
+**不建议**上自动更新（watchtower 之类）。本引擎是单进程单写者，重启会从中断处恢复，
+但**在持仓中途被强制重启**依然是真实风险——把它放在你看着的时候再切。
+
+### 回滚
+
+```bash
+OQ_IMAGE_TAG=v1.0.3 docker compose up -d
+```
+
+镜像按版本号保留，回滚就是换一个 tag。数据库 schema 只在升级时前进，
+回滚到更旧的镜像前先 `oq verify` 确认 schema 版本兼容。
+
+## 11. 已知限制
 
 - **仅 OKX**，且只支持单向持仓模式（`posSide: net`）。
 - 合成数据用于**管道验证**，不可用于策略评估。
@@ -255,6 +323,6 @@ deploy/                 systemd unit
 - 单进程，无法横向扩展；这是刻意选择，不是缺陷。
 - 回测与实盘的撮合模型不同（回测下一根开盘价 ± 滑点；实盘为市价单 + 真实盘口），二者会有偏差。
 
-## 11. 许可
+## 12. 许可
 
 私有项目，未授权分发。
