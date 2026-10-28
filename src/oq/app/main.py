@@ -29,7 +29,7 @@ from oq.data.store import ParquetStore
 from oq.execution.okx_adapter import build_rest
 from oq.execution.paper import InstantQuoteBroker
 from oq.storage import Database, Store
-from oq.version import __version__
+from oq.version import app_version
 
 log = logging.getLogger(__name__)
 STATIC_DIR = Path(__file__).parent / "static"
@@ -44,7 +44,7 @@ class AppContext:
     marks: dict[str, Any] = field(default_factory=dict)
     last_cycle_ms: int = 0
     started_at: float = field(default_factory=time.time)
-    version: str = __version__
+    version: str = field(default_factory=app_version)
     scheduler: Scheduler | None = None
 
     def audit(self, actor: str, action: str, detail: Any = None) -> None:
@@ -154,7 +154,7 @@ def build_app(config: Config | None = None, *, start_scheduler: bool | None = No
 
     app = FastAPI(
         title="Origin Quant",
-        version=__version__,
+        version=app_version(),
         docs_url="/api/docs",
         openapi_url="/api/openapi.json",
     )
@@ -169,7 +169,7 @@ def build_app(config: Config | None = None, *, start_scheduler: bool | None = No
         page = STATIC_DIR / "index.html"
         if page.exists():
             return FileResponse(page)
-        return JSONResponse({"service": "origin-quant", "version": __version__})
+        return JSONResponse({"service": "origin-quant", "version": app_version()})
 
     @app.get("/favicon.ico")
     async def favicon() -> Any:

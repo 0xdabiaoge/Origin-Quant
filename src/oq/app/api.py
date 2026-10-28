@@ -36,6 +36,7 @@ from oq.config import Config
 from oq.domain.events import EventType
 from oq.strategy.registry import build_position_manager, build_strategies
 from oq.types import D
+from oq.version import app_version
 
 log = logging.getLogger(__name__)
 
@@ -63,7 +64,7 @@ async def health(request: Request) -> dict[str, Any]:
     return {
         "status": "ok",
         "mode": ctx.config.app.mode,
-        "version": ctx.version,
+        "version": app_version(),
         "uptime_s": round(time.time() - ctx.started_at, 1),
         "last_cycle_ms": ctx.last_cycle_ms,
     }

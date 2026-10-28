@@ -89,3 +89,15 @@ def test_decisions_endpoint_returns_a_list(app_client):
     res = app_client.get("/api/decisions")
     assert res.status_code == 200
     assert isinstance(res.json()["decisions"], list)
+
+
+def test_the_health_endpoint_reports_the_build_version(app_client, monkeypatch):
+    """Regression: /api/health used the module constant, not the build stamp.
+
+    The container was stamped 1.0.1 while the health endpoint kept reporting
+    1.0.0 from ``oq.version.__version__``, so the one screen an operator trusts
+    to tell them what is running was lying.
+    """
+    monkeypatch.setenv("OQ_VERSION", "7.7.7")
+    body = app_client.get("/api/health").json()
+    assert body["version"] == "7.7.7"
