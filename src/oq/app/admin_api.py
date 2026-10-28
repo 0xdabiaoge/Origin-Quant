@@ -29,7 +29,6 @@ from oq.app.auth import (
     require_write,
     set_password,
     set_role,
-    user_count,
 )
 from oq.config import redacted_config
 from oq.version import app_version
@@ -370,8 +369,9 @@ async def admin_delete_user(
     with ctx.db.tx() as conn:
         if username == principal.name:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "refusing to delete yourself")
-        if user_count(conn) <= 1:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "refusing to delete the last user")
+        # No "last user" guard: the environment password always remains a way in,
+        # so deleting every row cannot lock anyone out. Blocking here made the
+        # console unable to remove a stray account.
         delete_user(conn, username)
         admin_data.record_audit(conn, principal.name, "user.delete", {"username": username})
     return {"ok": True}

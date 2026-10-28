@@ -139,14 +139,28 @@ def test_viewer_cannot_manage_users(client):
     )
 
 
-def test_the_last_user_cannot_be_deleted(client):
-    """Deleting the final account would lock every human out, so it is refused."""
+def test_a_stray_account_can_be_deleted(client):
+    """The environment password remains a way in, so deleting the last row is
+    safe and must not be blocked: refusing it made stray accounts permanent."""
     login(client)
     client.post(
         "/api/v1/admin/users",
-        json={"username": "solo", "password": "longenough", "role": "owner"},
+        json={"username": "stray", "password": "longenough", "role": "viewer"},
     )
-    assert client.delete("/api/v1/admin/users/solo").status_code == 400
+    assert client.delete("/api/v1/admin/users/stray").status_code == 200
+    assert client.get("/api/v1/admin/users").json()["items"] == []
+
+
+def test_you_cannot_delete_yourself(client):
+    """A session whose own row is deleted would be a confusing half-state."""
+    login(client)
+    client.post(
+        "/api/v1/admin/users",
+        json={"username": "alice", "password": "longenough", "role": "owner"},
+    )
+    client.post("/api/auth/logout")
+    login(client, "alice", "longenough")
+    assert client.delete("/api/v1/admin/users/alice").status_code == 400
 
 
 # -- audit ------------------------------------------------------------------
