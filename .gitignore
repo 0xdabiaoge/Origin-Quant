@@ -27,6 +27,9 @@ node_modules/
 web/dist/
 web/.vite/
 
+# built SPA (emitted by `npm run build`; CI builds it, the wheel ships it)
+src/oq/app/web/
+
 # editors / os
 .idea/
 .vscode/

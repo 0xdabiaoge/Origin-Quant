@@ -239,15 +239,73 @@ src/oq/
   execution/            broker / paper / oms / journal / okx_adapter / reconcile
   backtest/             engine / data / metrics / report
   storage/              schema.sql / db / storage（事件 + 投影）
-  app/                  api / auth / orchestrator / main / static
-tests/                  98 个测试：类型、组合、风控、执行、策略、回测不变量、存储、API、调度、适配器
+  app/                  api（控制面）/ admin_api（v1）/ admin_data（读模型）
+                        auth（用户·角色·会话）/ orchestrator / main
+  app/web/              构建产物（CI 生成，不入库）
+web/                    前端源码：Vue 3 + Vite + TS + Tailwind 4 + Pinia
+  src/views/            落地页 / 文档 / 登录 / 工作台 6 页 / 管理后台 7 页
+  src/layouts/          AppLayout（工作台）、AdminLayout（后台）
+  src/components/       EChart / StatCard / PageHeader / Toast 等
+tests/                  118 个测试：类型、组合、风控、执行、策略、回测不变量、存储、
+                        API、v1 权限矩阵、调度、适配器
 deploy/                 systemd unit（裸机部署用）
-.github/workflows/      ci.yml（三平台测试 + 构建验证）、release.yml（打 tag 推 GHCR）
+.github/workflows/      ci.yml（前端构建 + 三平台测试 + 镜像验证）、release.yml（打 tag 推 GHCR）
 ```
 
 ---
 
-## 10. 部署（镜像 → VPS）
+## 10. 界面
+
+前端是 Vue 3 + Vite 单页应用，构建产物直接打进 Python 包，由 `oq serve` 同源提供，
+没有独立的静态服务器，也没有跨域配置。
+
+**公开层（无需登录）**
+
+| 路径 | 内容 |
+|---|---|
+| `/` | 落地页：净值曲线、交易统计、风险声明 |
+| `/docs` | 使用文档 |
+| `/login` | 登录 |
+
+**工作台 `/app`（登录后）**
+
+| 路径 | 内容 |
+|---|---|
+| `/app` | 净值曲线、回撤、热度、持仓、最近决策 |
+| `/app/positions` | 按账本分组的持仓与未实现盈亏 |
+| `/app/orders` | 未结订单与成交明细 |
+| `/app/decisions` | 决策流水 + 拒绝原因分布 |
+| `/app/backtest` | 回测器 |
+| `/app/data` | 每个标的的数据新鲜度 |
+
+**管理后台 `/admin`（owner 角色）**
+
+| 路径 | 内容 |
+|---|---|
+| `/admin` | 表记录数、事件类型分布、交易统计 |
+| `/admin/users` | 建号、改密、改角色、删除 |
+| `/admin/audit` | 审计日志（谁在何时做了什么） |
+| `/admin/config` | 当前配置快照（已脱敏）+ 配置指纹 |
+| `/admin/logs` | 运行日志尾部，支持过滤 |
+| `/admin/backup` | SQLite 在线备份 |
+| `/admin/danger` | 熔断 / 暂停 / 恢复 / 全部平仓，需输入确认词 |
+
+**前端本地开发**
+
+```bash
+cd web && npm install && npm run dev     # http://localhost:5173，/api 代理到 8000
+npm run build                            # 产物写入 src/oq/app/web
+```
+
+**角色**：`owner` 全部权限 · `trader` 可驱动引擎但不可改配置 · `viewer` 只读。
+首次登录用 `operator` + `OQ_ADMIN_PASSWORD_HASH` 对应的密码，之后在后台建正式账号。
+
+**API 分组**：`/api/v1/public/*` 免登录（只有净值与统计，**不含持仓和订单**）·
+`/api/v1/app/*` 需登录 · `/api/v1/admin/*` 需 owner。旧的 `/api/*` 保留兼容。
+
+---
+
+## 11. 部署（镜像 → VPS）
 
 版本由 git tag 数量推导，不需要手动改号：
 
@@ -314,7 +372,7 @@ OQ_IMAGE_TAG=v1.0.3 docker compose up -d
 镜像按版本号保留，回滚就是换一个 tag。数据库 schema 只在升级时前进，
 回滚到更旧的镜像前先 `oq verify` 确认 schema 版本兼容。
 
-## 11. 已知限制
+## 12. 已知限制
 
 - **仅 OKX**，且只支持单向持仓模式（`posSide: net`）。
 - 合成数据用于**管道验证**，不可用于策略评估。
@@ -323,6 +381,6 @@ OQ_IMAGE_TAG=v1.0.3 docker compose up -d
 - 单进程，无法横向扩展；这是刻意选择，不是缺陷。
 - 回测与实盘的撮合模型不同（回测下一根开盘价 ± 滑点；实盘为市价单 + 真实盘口），二者会有偏差。
 
-## 12. 许可
+## 13. 许可
 
 私有项目，未授权分发。

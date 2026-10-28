@@ -1,4 +1,21 @@
 # syntax=docker/dockerfile:1.7
+
+# -- frontend -----------------------------------------------------------------
+# The SPA is built here and copied into the Python image, so the runtime stage
+# never carries a Node toolchain. Building in CI (not on the VPS) keeps the
+# 1.9GB server from ever running npm.
+FROM node:22-alpine AS web
+
+WORKDIR /web
+
+# Install deps first: this layer survives source edits.
+COPY web/package.json web/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+
+COPY web/ ./
+RUN npm run build
+
+# -- runtime ------------------------------------------------------------------
 FROM python:3.11-slim AS base
 
 # Stamped by the release workflow (v1.0.0, v1.0.1, ...). Defaults to a clearly
@@ -28,6 +45,11 @@ RUN apt-get update \
 
 COPY pyproject.toml README.md ./
 COPY src ./src
+
+# The built SPA lands inside the package before install, so the wheel contains
+# a working UI and `oq serve` needs no extra volume.
+COPY --from=web /src/oq/app/web ./src/oq/app/web
+
 RUN pip install --no-cache-dir . \
  && apt-get purge -y --auto-remove build-essential \
  && rm -rf /var/lib/apt/lists/*
@@ -36,8 +58,8 @@ COPY config ./config
 
 # Non-root, no shell, no home write access.
 RUN useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin oq \
- && mkdir -p /app/data /app/logs \
- && chown -R oq:oq /app/data /app/logs
+ && mkdir -p /app/data /app/logs /app/backups \
+ && chown -R oq:oq /app/data /app/logs /app/backups
 
 USER 10001:10001
 
