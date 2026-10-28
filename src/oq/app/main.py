@@ -19,6 +19,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from oq.app.admin_api import router as v1_router
 from oq.app.api import router
 from oq.backtest import trading_symbols
 from oq.clock import sleep_until, tf_to_ms
@@ -32,7 +33,9 @@ from oq.storage import Database, Store
 from oq.version import app_version
 
 log = logging.getLogger(__name__)
-STATIC_DIR = Path(__file__).parent / "static"
+# Built SPA (Vite output, emitted into the package by `npm run build`).
+# Overridable so a build can be mounted from outside without rebuilding the wheel.
+WEB_DIR = Path(os.getenv("OQ_WEB_DIR", str(Path(__file__).parent / "web")))
 
 
 @dataclass
@@ -160,16 +163,42 @@ def build_app(config: Config | None = None, *, start_scheduler: bool | None = No
     )
     app.state.oq = ctx
     app.include_router(router, prefix="/api")
+    app.include_router(v1_router, prefix="/api/v1")
+    # Login/logout/me are also exposed under v1 so the console has one base path.
+    app.include_router(router, prefix="/api/v1", include_in_schema=False)
 
-    if STATIC_DIR.exists():
-        app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+    # Hashed Vite assets are immutable, so they can be cached hard.
+    assets_dir = WEB_DIR / "assets"
+    if assets_dir.is_dir():
+        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
+
+    def _spa_index() -> Path | None:
+        page = WEB_DIR / "index.html"
+        return page if page.exists() else None
 
     @app.get("/")
     async def index() -> Any:
-        page = STATIC_DIR / "index.html"
-        if page.exists():
+        page = _spa_index()
+        if page is not None:
             return FileResponse(page)
         return JSONResponse({"service": "origin-quant", "version": app_version()})
+
+    @app.get("/{full_path:path}")
+    async def spa_fallback(full_path: str, request: Request) -> Any:
+        """History-mode routing: unknown paths render the SPA, not a 404.
+
+        API paths are excluded so a typo in a fetch still fails loudly instead
+        of silently returning HTML.
+        """
+        if full_path.startswith(("api/", "assets/")):
+            return JSONResponse({"error": "not found"}, status_code=404)
+        candidate = WEB_DIR / full_path
+        if full_path and candidate.is_file():
+            return FileResponse(candidate)
+        page = _spa_index()
+        if page is not None:
+            return FileResponse(page)
+        return JSONResponse({"error": "not found"}, status_code=404)
 
     @app.get("/favicon.ico")
     async def favicon() -> Any:

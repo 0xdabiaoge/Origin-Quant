@@ -399,6 +399,10 @@ class Orchestrator:
         if self.portfolio.drawdown(risk_ctx.marks) >= risk.max_drawdown_pct and not self._halted:
             self.halt(f"drawdown {self.portfolio.drawdown(risk_ctx.marks):.2%}")
 
+    def flatten(self, marks: Mapping[str, Decimal], reason: str) -> None:
+        """Public entry point for the admin console's danger zone."""
+        self._flatten(marks, int(time.time() * 1000), reason)
+
     def _flatten(self, marks: Mapping[str, Decimal], now: int, reason: str) -> None:
         from oq.types import Side
 

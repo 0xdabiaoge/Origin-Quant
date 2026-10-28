@@ -18,11 +18,16 @@ from pydantic import BaseModel, Field
 
 from oq.app.auth import (
     COOKIE_NAME,
+    ROLE_OWNER,
+    SESSION_TTL_S,
     Principal,
+    bootstrap_password_hash,
+    check_password,
+    get_user,
     issue_session,
     require_auth,
     require_write,
-    verify_password,
+    touch_login,
 )
 from oq.backtest import (
     BacktestEngine,
@@ -45,6 +50,7 @@ router = APIRouter()
 
 class LoginBody(BaseModel):
     password: str = Field(min_length=1, max_length=256)
+    username: str = Field(default="operator", max_length=64)
 
 
 class BacktestBody(BaseModel):
@@ -130,20 +136,49 @@ async def config(request: Request, principal: Principal = Depends(require_auth))
     return redacted_config(_state(request).config)
 
 
-@router.post("/auth/login")
+@router.post("/auth/login", include_in_schema=True)
 async def login(request: Request, body: LoginBody, response: Response) -> dict[str, Any]:
-    if not verify_password(body.password):
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid credentials")
-    token = issue_session("operator")
+    """Log in with the bootstrap password, or with a database user.
+
+    The bootstrap password lives in the environment so an operator can always
+    get in even if they lock themselves out of the users table; once a user is
+    created that matches the submitted username, the table wins.
+    """
+    ctx = _state(request)
+    username = (body.username or "operator").strip()
+    with ctx.db.tx() as conn:
+        user = get_user(conn, username)
+        if user is not None:
+            if not check_password(str(user["password_hash"]), body.password):
+                raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid credentials")
+            touch_login(conn, username)
+            role = str(user["role"])
+        else:
+            bootstrap = bootstrap_password_hash()
+            if not bootstrap or not check_password(bootstrap, body.password):
+                raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid credentials")
+            role = ROLE_OWNER
+    token = issue_session(username, role)
     response.set_cookie(
         COOKIE_NAME,
         token,
         httponly=True,
         samesite="strict",
-        max_age=12 * 3600,
+        max_age=SESSION_TTL_S,
         secure=request.url.scheme == "https",
     )
+    return {"ok": True, "username": username, "role": role}
+
+
+@router.post("/auth/logout")
+async def logout(response: Response) -> dict[str, Any]:
+    response.delete_cookie(COOKIE_NAME)
     return {"ok": True}
+
+
+@router.get("/auth/me")
+async def me(principal: Principal = Depends(require_auth)) -> dict[str, Any]:
+    return {"username": principal.name, "role": principal.role, "via": principal.via}
 
 
 @router.post("/control/kill")

@@ -50,9 +50,17 @@ def test_dashboard_is_served(app_client):
     assert "Origin Quant" in res.text
 
 
-def test_static_assets_are_served(app_client):
-    assert app_client.get("/static/app.js").status_code == 200
-    assert app_client.get("/static/styles.css").status_code == 200
+def test_spa_routes_render_the_app_shell(app_client):
+    """History-mode routes must return the SPA, not a 404."""
+    for path in ("/", "/app", "/admin/users", "/docs", "/login"):
+        res = app_client.get(path)
+        assert res.status_code == 200, path
+        assert '<div id="app">' in res.text, path
+
+
+def test_unknown_api_paths_stay_404(app_client):
+    """A typo in a fetch must fail loudly instead of returning HTML."""
+    assert app_client.get("/api/v1/does-not-exist").status_code == 404
 
 
 def test_config_endpoint_redacts_secrets(app_client):
