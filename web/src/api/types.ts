@@ -143,9 +143,10 @@ export interface InstrumentFreshness {
 }
 
 export interface Me {
-  username: string;
-  role: string;
-  via: string;
+  authenticated: boolean;
+  username: string | null;
+  role: string | null;
+  via: string | null;
 }
 export interface PublicMetrics {
   mode: string;

@@ -83,6 +83,37 @@ async def public_metrics(request: Request) -> dict[str, Any]:
     }
 
 
+@router.get("/auth/me")
+async def auth_me(request: Request) -> dict[str, Any]:
+    """Report the current session, or ``authenticated: false``.
+
+    Deliberately answers 200 for an anonymous caller: the console probes this on
+    every page load, and a 401 here would print a console error for every
+    logged-out visit while telling us nothing new.
+    """
+    from oq.app.auth import COOKIE_NAME, _configured_token, _is_loopback, read_session
+
+    cookie = request.cookies.get(COOKIE_NAME)
+    if cookie:
+        principal = read_session(cookie)
+        if principal is not None:
+            return {
+                "authenticated": True,
+                "username": principal.name,
+                "role": principal.role,
+                "via": principal.via,
+            }
+    token = _configured_token()
+    if not token and _is_loopback(request):
+        return {
+            "authenticated": True,
+            "username": "loopback",
+            "role": "owner",
+            "via": "loopback",
+        }
+    return {"authenticated": False, "username": None, "role": None, "via": None}
+
+
 # -- workspace --------------------------------------------------------------
 @router.get("/app/overview")
 async def app_overview(

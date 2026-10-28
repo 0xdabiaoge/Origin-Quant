@@ -11,7 +11,12 @@ export const useAuthStore = defineStore("auth", () => {
   async function refresh(): Promise<void> {
     try {
       // A logged-out visitor is the normal case here, not an expired session.
-      user.value = await withoutUnauthorizedRedirect(() => v1.me());
+      // /auth/me answers 200 with authenticated:false rather than 401, so an
+      // anonymous page load does not litter the console with an error.
+      const me = await withoutUnauthorizedRedirect(() => v1.me());
+      user.value = me.authenticated
+        ? ({ ...me } as Me)
+        : null;
     } catch {
       user.value = null;
     } finally {
@@ -22,9 +27,11 @@ export const useAuthStore = defineStore("auth", () => {
   async function login(username: string, password: string): Promise<boolean> {
     error.value = "";
     try {
-      const res = await v1.login(username, password);
-      user.value = { username: res.username, role: res.role, via: "cookie" };
-      return true;
+      await v1.login(username, password);
+      // Re-read the session from the server so the role is never something the
+      // client guessed from the login response.
+      await refresh();
+      return user.value !== null;
     } catch (err) {
       error.value = err instanceof Error ? err.message : "登录失败";
       return false;

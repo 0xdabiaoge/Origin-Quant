@@ -235,3 +235,20 @@ def test_backup_creates_a_file(client):
     assert res.json()["bytes"] > 0
     listed = client.get("/api/v1/admin/backups").json()["items"]
     assert res.json()["file"] in [b["file"] for b in listed]
+
+
+def test_auth_me_answers_200_for_an_anonymous_caller(config, tmp_path, monkeypatch):
+    """The console probes this on every load; a 401 would be console noise.
+
+    It must still refuse to describe a session that does not exist.
+    """
+    cfg = config.model_copy(
+        update={"app": config.app.model_copy(update={"db_path": tmp_path / "anon.db"})}
+    )
+    monkeypatch.setenv("OQ_API_TOKEN", "s3cret")
+    app = build_app(cfg, start_scheduler=False)
+    with TestClient(app) as c:
+        res = c.get("/api/v1/auth/me")
+        assert res.status_code == 200
+        assert res.json()["authenticated"] is False
+        assert res.json()["username"] is None

@@ -8,7 +8,7 @@
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "vue-tsc --noEmit",
-    "render-check": "node ../scripts/render_check.mjs"
+    "render-check": "node render_check.mjs"
   },
   "dependencies": {
     "echarts": "^6.0.0",
