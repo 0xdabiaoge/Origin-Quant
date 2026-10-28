@@ -38,3 +38,6 @@ Thumbs.db
 
 # local scratch (VPS bring-up helpers)
 _vps/
+ck.txt
+vk.txt
+cookies*.txt
