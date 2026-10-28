@@ -35,11 +35,6 @@ jobs:
         working-directory: web
         run: npx vite build
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: web-dist
-          path: src/oq/app/web
-          retention-days: 7
 
   test:
     runs-on: ${{ matrix.os }}
@@ -51,11 +46,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Tests assert the SPA shell is served, so the build must exist.
-      - uses: actions/download-artifact@v4
+      # The API tests assert the SPA shell is served, so build it here rather
+      # than downloading an artifact from another job: fewer moving parts, and
+      # it proves the build works on every matrix entry.
+      - uses: actions/setup-node@v4
         with:
-          name: web-dist
-          path: src/oq/app/web
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build frontend
+        working-directory: web
+        run: |
+          npm ci --no-audit --no-fund
+          npx vite build
 
       - uses: actions/setup-python@v5
         with:
