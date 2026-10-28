@@ -22,6 +22,10 @@ services:
       - "127.0.0.1:8000:8000"
     volumes:
       - oq-data:/app/data
+      # The rootfs is read-only, so anything the console writes needs a mount.
+      # Backups and logs are the only two write targets the UI exposes.
+      - oq-backups:/app/backups
+      - oq-logs:/app/logs
       - ./config:/app/config:ro
     read_only: true
     tmpfs:
@@ -40,3 +44,5 @@ services:
 
 volumes:
   oq-data:
+  oq-backups:
+  oq-logs:
