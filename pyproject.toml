@@ -37,7 +37,9 @@ oq = "oq.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-oq = ["app/static/*", "app/static/**/*", "storage/*.sql"]
+# The built SPA must ship inside the wheel: `oq serve` reads it from the package
+# directory, so a wheel without these globs installs a server with no UI.
+oq = ["app/web/*", "app/web/assets/*", "storage/*.sql"]
 
 [tool.ruff]
 line-length = 100

@@ -109,3 +109,18 @@ def test_the_health_endpoint_reports_the_build_version(app_client, monkeypatch):
     monkeypatch.setenv("OQ_VERSION", "7.7.7")
     body = app_client.get("/api/health").json()
     assert body["version"] == "7.7.7"
+
+
+def test_the_package_declares_the_built_spa_as_package_data():
+    """`pip install .` must carry the UI.
+
+    This is a packaging rule, not a runtime one: it shipped v1.0.3 with a
+    server whose index fallback quietly returned JSON instead of the app.
+    """
+    import tomllib
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    data = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    globs = data["tool"]["setuptools"]["package-data"]["oq"]
+    assert any("app/web" in g for g in globs), globs
