@@ -8,7 +8,11 @@ services:
     container_name: origin-quant
     restart: unless-stopped
     env_file:
-      - .env
+      # `raw` stops Compose from interpolating `$`. Without it an argon2 hash in
+      # OQ_ADMIN_PASSWORD_HASH is silently mangled ($argon2id$v=19 -> =19) and
+      # every login fails with a perfectly valid password.
+      - path: .env
+        format: raw
     environment:
       OQ_CONFIG_DIR: /app/config
       OQ_DB_PATH: /app/data/origin.db
