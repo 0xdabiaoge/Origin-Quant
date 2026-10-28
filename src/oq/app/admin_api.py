@@ -416,8 +416,10 @@ async def admin_logs(
     principal: Principal = Depends(require_owner),
 ) -> dict[str, Any]:
     """Tail the log file if one is configured, otherwise report where it would be."""
+    import os
+
     ctx = _state(request)
-    log_dir = Path(ctx.config.root) / "logs"
+    log_dir = Path(os.getenv("OQ_LOG_DIR") or (Path(ctx.config.root) / "logs"))
     files = sorted(log_dir.glob("*.log"), key=lambda p: p.stat().st_mtime, reverse=True)
     if not files:
         return {"path": None, "lines": [], "available": False}

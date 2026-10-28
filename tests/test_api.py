@@ -124,3 +124,25 @@ def test_the_package_declares_the_built_spa_as_package_data():
     data = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
     globs = data["tool"]["setuptools"]["package-data"]["oq"]
     assert any("app/web" in g for g in globs), globs
+
+
+def test_the_admin_logs_endpoint_reads_the_configured_log_dir(config, tmp_path, monkeypatch):
+    """The console tails OQ_LOG_DIR; without it the page is permanently empty."""
+    from fastapi.testclient import TestClient
+
+    from oq.app.main import build_app
+
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+    (log_dir / "engine.log").write_text("line one\nline two\n", encoding="utf-8")
+
+    cfg = config.model_copy(
+        update={"app": config.app.model_copy(update={"db_path": tmp_path / "logs.db"})}
+    )
+    monkeypatch.setenv("OQ_API_TOKEN", "")
+    monkeypatch.setenv("OQ_LOG_DIR", str(log_dir))
+    app = build_app(cfg, start_scheduler=False)
+    with TestClient(app) as c:
+        body = c.get("/api/v1/admin/logs").json()
+    assert body["available"] is True
+    assert body["lines"] == ["line one", "line two"]

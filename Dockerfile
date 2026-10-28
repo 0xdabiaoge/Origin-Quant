@@ -66,6 +66,7 @@ USER 10001:10001
 ENV OQ_CONFIG_DIR=/app/config \
     OQ_DB_PATH=/app/data/origin.db \
     OQ_DATA_DIR=/app/data \
+    OQ_LOG_DIR=/app/logs \
     OQ_LOG_LEVEL=INFO \
     OQ_VERSION=${OQ_VERSION}
 

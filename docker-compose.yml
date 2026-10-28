@@ -17,6 +17,7 @@ services:
       OQ_CONFIG_DIR: /app/config
       OQ_DB_PATH: /app/data/origin.db
       OQ_DATA_DIR: /app/data
+      OQ_LOG_DIR: /app/logs
     ports:
       # Bind to loopback only. Put a TLS reverse proxy in front for remote access.
       - "127.0.0.1:8000:8000"

@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import logging.handlers
 import os
 import sys
 from pathlib import Path
@@ -34,12 +35,34 @@ from oq.version import app_version, code_version
 log = logging.getLogger("oq")
 
 
-def _setup_logging(level: str) -> None:
-    logging.basicConfig(
-        level=getattr(logging, level.upper(), logging.INFO),
-        format="%(asctime)s %(levelname)-7s %(name)s %(message)s",
-        datefmt="%H:%M:%S",
+def _setup_logging(level: str, log_dir: Path | None = None) -> None:
+    """Log to stdout, and to a file when a directory is available.
+
+    The admin console tails that file, so without it the "运行日志" page is
+    permanently empty. Failure to open the file is not fatal: a read-only
+    filesystem should degrade the console, not stop the engine.
+    """
+    fmt = logging.Formatter(
+        "%(asctime)s %(levelname)-7s %(name)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
     )
+    root = logging.getLogger()
+    root.setLevel(getattr(logging, level.upper(), logging.INFO))
+
+    stream = logging.StreamHandler()
+    stream.setFormatter(fmt)
+    root.addHandler(stream)
+
+    if log_dir is None:
+        return
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        file_handler = logging.handlers.RotatingFileHandler(
+            log_dir / "engine.log", maxBytes=8 * 1024 * 1024, backupCount=3, encoding="utf-8"
+        )
+        file_handler.setFormatter(fmt)
+        root.addHandler(file_handler)
+    except OSError:
+        root.warning("file logging disabled: %s is not writable", log_dir)
 
 
 def _open(config: Config) -> tuple[Database, Store]:
@@ -179,6 +202,9 @@ def cmd_serve(args: argparse.Namespace, config: Config) -> int:
         port=args.port,
         log_level=config.app.log_level.lower(),
         access_log=False,
+        # uvicorn's default dictConfig replaces the root handlers, which would
+        # throw away the file handler and leave the console's log page empty.
+        log_config=None,
     )
     return 0
 
@@ -282,7 +308,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    _setup_logging(args.log_level)
+    log_dir = os.getenv("OQ_LOG_DIR", "")
+    _setup_logging(args.log_level, Path(log_dir) if log_dir else None)
     if args.command == "version":
         return cmd_version(args, None)
 
