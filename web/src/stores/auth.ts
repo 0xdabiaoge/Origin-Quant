@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
-import { v1 } from "@/api/client";
+import { v1, withoutUnauthorizedRedirect } from "@/api/client";
 import type { Me } from "@/api/types";
 
 export const useAuthStore = defineStore("auth", () => {
@@ -10,7 +10,8 @@ export const useAuthStore = defineStore("auth", () => {
 
   async function refresh(): Promise<void> {
     try {
-      user.value = await v1.me();
+      // A logged-out visitor is the normal case here, not an expired session.
+      user.value = await withoutUnauthorizedRedirect(() => v1.me());
     } catch {
       user.value = null;
     } finally {

@@ -11,9 +11,22 @@ export class ApiError extends Error {
 }
 
 let onUnauthorized: (() => void) | null = null;
+// Probing the session on boot is expected to 401 for a logged-out visitor.
+// Suppressing the redirect for that one call keeps the public pages public.
+let suppressUnauthorized = false;
 
 export function setUnauthorizedHandler(fn: () => void): void {
   onUnauthorized = fn;
+}
+
+/** Run `fn` without letting a 401 trigger the global redirect. */
+export async function withoutUnauthorizedRedirect<T>(fn: () => Promise<T>): Promise<T> {
+  suppressUnauthorized = true;
+  try {
+    return await fn();
+  } finally {
+    suppressUnauthorized = false;
+  }
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -27,7 +40,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   });
 
   if (res.status === 401) {
-    onUnauthorized?.();
+    if (!suppressUnauthorized) onUnauthorized?.();
     throw new ApiError(401, "登录已失效，请重新登录");
   }
 
