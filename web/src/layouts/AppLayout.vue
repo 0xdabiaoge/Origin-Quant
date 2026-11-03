@@ -3,7 +3,6 @@ import { computed, onMounted, ref } from "vue";
 import { RouterLink, RouterView, useRoute, useRouter } from "vue-router";
 import { useAuthStore } from "@/stores/auth";
 import { v1 } from "@/api/client";
-import StatusDot from "@/components/StatusDot.vue";
 import Toast from "@/components/Toast.vue";
 
 const auth = useAuthStore();
@@ -116,7 +115,7 @@ const roleLabel = computed(
             <div class="truncate text-xs font-medium">{{ auth.user?.username }}</div>
             <div class="text-[11px] text-mute-500">{{ roleLabel }}</div>
           </div>
-          <StatusDot :ok="mode === 'paper' || mode === 'live'" :label="mode" />
+          <span class="text-[11px] text-mute-400">模式：{{ mode || '未知' }}</span>
         </div>
         <button class="btn btn-ghost w-full justify-start text-xs" @click="doLogout">退出登录</button>
       </div>

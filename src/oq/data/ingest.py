@@ -50,27 +50,38 @@ class Ingestor:
         existing = self.store.last_bar_ms(symbol, timeframe)
         now = int(time.time() * 1000)
         target = now - days * 86_400_000
-        cursor = max(existing, target) if existing else target
+        cutoff = max(existing, target) if existing else target
+        cursor: int | None = None
         rows: list[Bar] = []
         requests = 0
-        # history-candles walks backwards via `after` = oldest - 1
+        # Start at the latest page and walk backwards. OKX `after` is an
+        # exclusive older-than cursor, so passing last_bar_ms initially would
+        # fetch older data and never refresh the latest candles.
         while requests < max_requests:
             batch = self.rest.candles(
                 symbol,
                 timeframe,
                 limit=100,
-                after_ms=cursor if cursor > target else None,
+                after_ms=cursor,
                 history=True,
             )
             if not batch:
+                if existing and cursor is not None and cursor > cutoff:
+                    raise RuntimeError(
+                        f"incomplete candle history for {symbol}: gap before {cursor}"
+                    )
                 break
-            fresh = [b for b in batch if b.ts_ms >= target]
+            fresh = [b for b in batch if b.ts_ms >= cutoff]
             rows.extend(fresh)
             requests += 1
             oldest = min(b.ts_ms for b in batch)
-            if oldest <= target:
+            if cursor is not None and oldest >= cursor:
+                raise RuntimeError(f"candle pagination did not advance for {symbol}")
+            if oldest <= cutoff:
                 break
-            cursor = oldest - 1
+            cursor = oldest
+        else:
+            raise RuntimeError(f"candle pagination limit reached for {symbol}")
         if rows:
             self.store.write_bars(symbol, timeframe, rows)
         frame = self.store.read_bars(symbol, timeframe)
@@ -84,21 +95,29 @@ class Ingestor:
             source="okx",
         )
 
-    def sync_funding(self, symbol: str, *, days: int = 365) -> int:
+    def sync_funding(self, symbol: str, *, days: int = 365, max_requests: int = 400) -> int:
         if self.rest is None:
             raise RuntimeError("no REST client configured")
         target = int(time.time() * 1000) - days * 86_400_000
         points: list[FundingPoint] = []
         cursor: int | None = None
-        for _ in range(400):
-            batch = self.rest.funding_history(symbol, limit=100, before_ms=cursor)
+        for _ in range(max_requests):
+            batch = self.rest.funding_history(symbol, limit=100, after_ms=cursor)
             if not batch:
+                if cursor is not None and cursor > target:
+                    # The venue only retains a limited history. The returned
+                    # data must not be mistaken for the full requested range.
+                    log.warning("funding history for %s ends before requested range", symbol)
                 break
             points.extend(point for point in batch if point.ts_ms >= target)
             oldest = min(point.ts_ms for point in batch)
+            if cursor is not None and oldest >= cursor:
+                raise RuntimeError(f"funding pagination did not advance for {symbol}")
             if oldest <= target:
                 break
             cursor = oldest
+        else:
+            raise RuntimeError(f"funding pagination limit reached for {symbol}")
         return self.store.write_funding(symbol, points) if points else 0
 
     def sync_instruments(self) -> int:

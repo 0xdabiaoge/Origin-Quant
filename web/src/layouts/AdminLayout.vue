@@ -14,6 +14,10 @@ const mode = ref("");
 
 const nav = [
   { name: "admin-overview", label: "系统概览" },
+  { name: "admin-ai", label: "AI 模型与决策" },
+  { name: "admin-news", label: "新闻情报" },
+  { name: "admin-venue", label: "交易所状态" },
+  { name: "admin-notifications", label: "风险通知" },
   { name: "admin-users", label: "用户" },
   { name: "admin-audit", label: "审计日志" },
   { name: "admin-config", label: "配置" },

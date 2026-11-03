@@ -25,19 +25,19 @@ const fresh = computed(() => rows.value.length - stale.value);
 
 <template>
   <div>
-    <PageHeader title="数据新鲜度" :subtitle="`时间周期 ${data?.timeframe ?? '—'} · 过期的标的不会参与交易`" />
+    <PageHeader title="数据新鲜度" :subtitle="`时间周期 ${data?.timeframe ?? '—'} · 数据状态需要结合周期记录核对`" />
 
     <p v-if="err" class="mb-4 rounded-lg border border-danger-600/40 bg-danger-600/10 px-3 py-2 text-sm text-danger-500">{{ err }}</p>
 
     <div class="grid gap-3 sm:grid-cols-3">
-      <StatCard label="标的数量" :value="String(rows.length)" />
-      <StatCard label="新鲜" :value="String(fresh)" tone="up" />
-      <StatCard label="过期" :value="String(stale)" :tone="stale > 0 ? 'warn' : 'neutral'" hint="落后超过一个周期" />
+      <StatCard label="标的数量" :value="data ? String(rows.length) : '—'" />
+      <StatCard label="新鲜" :value="data ? String(fresh) : '—'" tone="up" />
+      <StatCard label="过期" :value="data ? String(stale) : '—'" :tone="stale > 0 ? 'warn' : 'neutral'" hint="落后超过一个周期" />
     </div>
 
     <div v-if="stale === rows.length && rows.length > 0" class="mt-3 rounded-lg border border-warn-500/30 bg-warn-500/5 px-4 py-3 text-xs leading-relaxed text-mute-300">
       <span class="font-medium text-warn-500">全部标的都已过期。</span>
-      调度器会持续跳过周期（skipped: no_data）。这是预期行为——合成数据不会自己增长。
+      交易周期可能跳过。合成数据不会自己增长，请检查实际周期记录。
       要恢复交易，需要接入真实行情源并重新灌入数据。
     </div>
 
@@ -63,7 +63,7 @@ const fresh = computed(() => rows.value.length - stale.value);
           </tbody>
         </table>
       </div>
-      <EmptyState v-else title="没有标的配置" hint="检查 config/instruments.toml。" />
+      <EmptyState v-else :title="data ? '没有标的配置' : '数据未获取'" :hint="data ? '检查 config/base.yaml。' : '请检查连接或稍后重试。'" />
     </div>
   </div>
 </template>

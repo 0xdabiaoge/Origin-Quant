@@ -109,3 +109,40 @@ def test_fees_are_charged_on_both_sides(result):
 def test_decision_count_matches_risk_engine_calls(result):
     res, _engine = result
     assert res.decisions >= res.intents
+
+
+def test_funding_only_applies_after_entry_to_each_book_at_a_causal_price(config):
+    from oq.backtest.data import from_bars
+    from oq.data.models import Bar, FundingPoint
+    from oq.types import Book, InstType, Side
+
+    symbol = "BTC-USDT-SWAP"
+    bars = [
+        Bar(symbol, "15m", timestamp, D(open_px), D("1000"), D("1"), D("999"), D("1"))
+        for timestamp, open_px in ((1000, "100"), (2000, "200"), (3000, "300"))
+    ]
+    funding = [
+        FundingPoint(symbol, 1500, D("0.5")),  # before either position existed
+        FundingPoint(symbol, 2500, D("0.01")),
+    ]
+    series = {symbol: from_bars(symbol, bars, funding)}
+    engine = BacktestEngine(config, [], build_position_manager())
+    for book in (Book.CARRY, Book.DIRECTIONAL):
+        engine.portfolio.apply_fill(
+            symbol=symbol,
+            book=book,
+            inst_type=InstType.SWAP,
+            side=Side.SELL,
+            qty=D("1"),
+            px=D("200"),
+            fee=ZERO,
+            ts_ms=1700,
+        )
+
+    engine._apply_funding(series, {symbol: 2}, 3000, {symbol: D("999")})
+    assert engine.portfolio.funding_net == D("4")  # 2 books * 1 * 200 * 0.01
+    assert engine.portfolio.get(symbol, Book.CARRY).funding_net == D("2")
+    assert engine.portfolio.get(symbol, Book.DIRECTIONAL).funding_net == D("2")
+
+    engine._apply_funding(series, {symbol: 2}, 3000, {symbol: D("999")})
+    assert engine.portfolio.funding_net == D("4")

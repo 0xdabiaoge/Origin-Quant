@@ -116,7 +116,7 @@ class BacktestEngine:
         self._rejections: Counter[str] = Counter()
         self._decisions = 0
         self._intents = 0
-        self._funding_idx: dict[str, int] = {}
+        self._funding_idx: dict[tuple[str, Book], int] = {}
 
     # -- public --------------------------------------------------------
     def run(self, series: Mapping[str, SymbolSeries], params: BacktestParams) -> BacktestResult:
@@ -129,7 +129,7 @@ class BacktestEngine:
         self._rejections = Counter()
         self._decisions = 0
         self._intents = 0
-        self._funding_idx = dict.fromkeys(series, 0)
+        self._funding_idx = {}
 
         timeline = np.unique(np.concatenate([s.ts for s in series.values()]))
         pointers = dict.fromkeys(series, -1)
@@ -321,20 +321,23 @@ class BacktestEngine:
             entry = position.avg_px
             if position.stop_px is None:
                 continue
-            risk = abs(entry - position.stop_px)
-            if risk <= ZERO:
-                continue
-
             # Stop first: when a bar contains both levels, assume the bad one.
             if position.is_long and low <= position.stop_px:
                 self._exit(
                     position, min(open_px, position.stop_px), "stop", ts, series, active, marks
                 )
                 continue
+
             if not position.is_long and high >= position.stop_px:
                 self._exit(
                     position, max(open_px, position.stop_px), "stop", ts, series, active, marks
                 )
+                continue
+
+            if position.initial_stop_px is None:
+                continue
+            risk = abs(entry - position.initial_stop_px)
+            if risk <= ZERO:
                 continue
 
             opened_bar = position.opened_bar if position.opened_bar is not None else index
@@ -446,14 +449,22 @@ class BacktestEngine:
             s = series.get(key)
             if s is None or s.funding_ts.size == 0:
                 continue
-            cursor = self._funding_idx.get(key, 0)
+            cursor_key = (key, position.book)
+            cursor = self._funding_idx.get(cursor_key, 0)
             while cursor < s.funding_ts.size and s.funding_ts[cursor] <= ts:
+                settlement_ms = int(s.funding_ts[cursor])
                 rate = D(float(s.funding_rates[cursor]))
-                price = marks.get(key, position.avg_px)
-                amount = -position.qty * price * rate
-                self.portfolio.apply_funding(key, position.book, amount, ts)
                 cursor += 1
-            self._funding_idx[key] = cursor
+                # Historical settlements cannot be applied to a later entry.
+                if settlement_ms <= position.opened_ms:
+                    continue
+                # Use the latest open available at the settlement. The close of
+                # the current bar is still in the future at that point.
+                price_index = int(np.searchsorted(s.ts, settlement_ms, side="right")) - 1
+                price = D(float(s.open[price_index])) if price_index >= 0 else position.avg_px
+                amount = -position.qty * price * rate
+                self.portfolio.apply_funding(key, position.book, amount, settlement_ms)
+            self._funding_idx[cursor_key] = cursor
 
     def _flatten(
         self,

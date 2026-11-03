@@ -91,7 +91,12 @@ def load_synthetic(
 
 
 def load_parquet(
-    config: Config, *, symbols: Iterable[str], timeframe: str, store: ParquetStore | None = None
+    config: Config,
+    *,
+    symbols: Iterable[str],
+    timeframe: str,
+    store: ParquetStore | None = None,
+    days: int | None = None,
 ) -> dict[str, SymbolSeries]:
     store = store or ParquetStore(config.data.parquet_dir)
     out: dict[str, SymbolSeries] = {}
@@ -102,6 +107,10 @@ def load_parquet(
         except FileNotFoundError:
             continue
         if frame is None or frame.empty:
+            continue
+        if "confirmed" in frame:
+            frame = frame[frame["confirmed"].eq(True)]
+        if frame.empty:
             continue
         ts = frame["ts_ms"].to_numpy(dtype=np.int64)
         out[symbol] = SymbolSeries(
@@ -114,15 +123,41 @@ def load_parquet(
             volume=frame["volume"].to_numpy(dtype=np.float64),
             funding_ts=(
                 funding["ts_ms"].to_numpy(dtype=np.int64)
-                if "ts_ms" in funding
+                if "ts_ms" in funding and "rate" in funding
                 else np.empty(0, dtype=np.int64)
             ),
             funding_rates=(
                 funding["rate"].to_numpy(dtype=np.float64)
-                if "rate" in funding
+                if "ts_ms" in funding and "rate" in funding
                 else np.empty(0, dtype=np.float64)
             ),
         )
+    if days is not None:
+        if days <= 0:
+            raise ValueError("days must be positive")
+        if out:
+            # Anchor to the latest available data, not to the wall clock. The
+            # report exposes the actual period so a stale dataset is visible.
+            end_ms = max(int(s.ts[-1]) for s in out.values())
+            start_ms = end_ms - days * 86_400_000
+            trimmed: dict[str, SymbolSeries] = {}
+            for symbol, series in out.items():
+                bars = (series.ts > start_ms) & (series.ts <= end_ms)
+                if not bars.any():
+                    continue
+                funding = (series.funding_ts > start_ms) & (series.funding_ts <= end_ms)
+                trimmed[symbol] = SymbolSeries(
+                    symbol=symbol,
+                    ts=series.ts[bars],
+                    open=series.open[bars],
+                    high=series.high[bars],
+                    low=series.low[bars],
+                    close=series.close[bars],
+                    volume=series.volume[bars],
+                    funding_ts=series.funding_ts[funding],
+                    funding_rates=series.funding_rates[funding],
+                )
+            out = trimmed
     return out
 
 

@@ -14,7 +14,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 class Database:
@@ -83,6 +83,19 @@ class Database:
             current = int(row["v"]) if row and row["v"] is not None else 0
             if current < SCHEMA_VERSION:
                 conn.execute("BEGIN")
+                # Old positions have no trustworthy original stop. Leave it
+                # NULL rather than guessing from the potentially moved stop.
+                columns = {row["name"] for row in conn.execute("PRAGMA table_info(positions)")}
+                if "initial_stop_px" not in columns:
+                    conn.execute("ALTER TABLE positions ADD COLUMN initial_stop_px TEXT")
+                if "tp1_r" not in columns:
+                    conn.execute(
+                        "ALTER TABLE positions ADD COLUMN tp1_r TEXT NOT NULL DEFAULT '1.5'"
+                    )
+                if "tp2_r" not in columns:
+                    conn.execute(
+                        "ALTER TABLE positions ADD COLUMN tp2_r TEXT NOT NULL DEFAULT '3.0'"
+                    )
                 conn.execute(
                     "INSERT INTO schema_version(version, applied_ms) VALUES (?, ?)",
                     (SCHEMA_VERSION, _now_ms()),

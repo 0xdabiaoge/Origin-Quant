@@ -19,7 +19,7 @@ from oq.config import Config
 from oq.domain.intent import GateResult, Intent, LegPlan, RiskDecision
 from oq.risk.context import RiskContext
 from oq.risk.sizing import build_legs
-from oq.types import ONE, ZERO, Action, Book, D, Instrument, safe_div
+from oq.types import DEFAULT_TP1_R, ONE, ZERO, Action, Book, D, Instrument, safe_div
 
 
 class RiskEngine:
@@ -141,7 +141,18 @@ class RiskEngine:
         for plan in legs:
             quote = ctx.quotes.get(plan.symbol)
             if quote is None:
+                if self.config.app.mode == "live":
+                    return GateResult("spread", False, f"quote unavailable: {plan.symbol}")
                 continue
+            if self.config.app.mode == "live" and (
+                quote.symbol != plan.symbol
+                or quote.bid <= ZERO
+                or quote.ask <= ZERO
+                or quote.ask < quote.bid
+                or quote.ts_ms > ctx.now_ms + 30_000
+                or ctx.now_ms - quote.ts_ms > self.config.data.staleness_seconds * 1000
+            ):
+                return GateResult("spread", False, f"invalid or stale quote: {plan.symbol}")
             if quote.spread_bps > limit:
                 return GateResult(
                     "spread", False, f"{plan.symbol} spread {quote.spread_bps:.2f}bps > {limit}bps"
@@ -191,9 +202,11 @@ class RiskEngine:
         return GateResult("stop_sanity", True)
 
     def _gate_rr(self, intent: Intent, legs: list[LegPlan], ctx: RiskContext) -> GateResult:
-        if intent.book is Book.CARRY or not intent.tp_ladder:
+        if intent.book is Book.CARRY:
             return GateResult("risk_reward", True)
-        first_r = intent.tp_ladder[0][0]
+        # The OMS still creates a default TP1 when a strategy omits a ladder;
+        # the actual target must be checked against the configured minimum.
+        first_r = intent.tp_ladder[0][0] if intent.tp_ladder else DEFAULT_TP1_R
         if first_r < self.risk.min_rr:
             return GateResult(
                 "risk_reward", False, f"first target {first_r}R < {self.risk.min_rr}R"

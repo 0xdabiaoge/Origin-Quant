@@ -57,6 +57,9 @@ class OkxAdapter:
         try:
             ack = self.rest.place_order(body)
         except OkxError as exc:
+            if exc.retryable:
+                # A timeout or server error is not proof of rejection.
+                raise
             return BrokerResult(rejected=f"{exc.code}: {exc.message}")
 
         venue_id = str(ack.get("ordId") or "")

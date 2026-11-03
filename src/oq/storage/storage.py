@@ -235,15 +235,17 @@ class Store:
             """
             INSERT INTO positions(symbol, book, inst_type, strategy_id, qty, avg_px, stop_px,
                                   tp_px, leverage, realized_pnl, fees_paid, funding_net,
-                                  initial_qty, tp1_done, tp2_done, time_stop_bars, opened_bar,
-                                  opened_ms, updated_ms)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                  initial_qty, initial_stop_px, tp1_r, tp2_r, tp1_done, tp2_done,
+                                  time_stop_bars, opened_bar, opened_ms, updated_ms)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(symbol, book) DO UPDATE SET
                 inst_type=excluded.inst_type, strategy_id=excluded.strategy_id,
                 qty=excluded.qty, avg_px=excluded.avg_px, stop_px=excluded.stop_px,
                 tp_px=excluded.tp_px, leverage=excluded.leverage,
                 realized_pnl=excluded.realized_pnl, fees_paid=excluded.fees_paid,
                 funding_net=excluded.funding_net, initial_qty=excluded.initial_qty,
+                initial_stop_px=excluded.initial_stop_px, tp1_r=excluded.tp1_r,
+                tp2_r=excluded.tp2_r,
                 tp1_done=excluded.tp1_done, tp2_done=excluded.tp2_done,
                 time_stop_bars=excluded.time_stop_bars, opened_bar=excluded.opened_bar,
                 updated_ms=excluded.updated_ms
@@ -262,6 +264,9 @@ class Store:
                 str(p.fees_paid),
                 str(p.funding_net),
                 str(p.initial_qty),
+                None if p.initial_stop_px is None else str(p.initial_stop_px),
+                str(p.tp1_r),
+                str(p.tp2_r),
                 int(p.tp1_done),
                 int(p.tp2_done),
                 p.time_stop_bars,
@@ -435,29 +440,35 @@ class Store:
         rows = self.db.query("SELECT * FROM positions")
         out: list[Position] = []
         for r in rows:
-            out.append(
-                Position(
-                    symbol=r["symbol"],
-                    book=Book(r["book"]),
-                    inst_type=InstType(r["inst_type"]),
-                    strategy_id=r["strategy_id"] or "",
-                    qty=D(r["qty"]),
-                    avg_px=D(r["avg_px"]),
-                    opened_ms=int(r["opened_ms"]),
-                    updated_ms=int(r["updated_ms"]),
-                    stop_px=None if r["stop_px"] is None else D(r["stop_px"]),
-                    tp_px=None if r["tp_px"] is None else D(r["tp_px"]),
-                    leverage=D(r["leverage"]),
-                    realized_pnl=D(r["realized_pnl"]),
-                    fees_paid=D(r["fees_paid"]),
-                    funding_net=D(r["funding_net"]),
-                    initial_qty=D(r["initial_qty"]),
-                    tp1_done=bool(r["tp1_done"]),
-                    tp2_done=bool(r["tp2_done"]),
-                    time_stop_bars=r["time_stop_bars"],
-                    opened_bar=r["opened_bar"],
-                )
+            position = Position(
+                symbol=r["symbol"],
+                book=Book(r["book"]),
+                inst_type=InstType(r["inst_type"]),
+                strategy_id=r["strategy_id"] or "",
+                qty=D(r["qty"]),
+                avg_px=D(r["avg_px"]),
+                opened_ms=int(r["opened_ms"]),
+                updated_ms=int(r["updated_ms"]),
+                stop_px=None if r["stop_px"] is None else D(r["stop_px"]),
+                tp_px=None if r["tp_px"] is None else D(r["tp_px"]),
+                leverage=D(r["leverage"]),
+                realized_pnl=D(r["realized_pnl"]),
+                fees_paid=D(r["fees_paid"]),
+                funding_net=D(r["funding_net"]),
+                initial_qty=D(r["initial_qty"]),
+                initial_stop_px=None if r["initial_stop_px"] is None else D(r["initial_stop_px"]),
+                tp1_r=D(r["tp1_r"]),
+                tp2_r=D(r["tp2_r"]),
+                tp1_done=bool(r["tp1_done"]),
+                tp2_done=bool(r["tp2_done"]),
+                time_stop_bars=r["time_stop_bars"],
+                opened_bar=r["opened_bar"],
             )
+            # Position's constructor derives an initial stop for newly opened
+            # positions. A migrated NULL is intentionally unknown, however.
+            if r["initial_stop_px"] is None:
+                position.initial_stop_px = None
+            out.append(position)
         return out
 
     def load_portfolio(self, default_cash: Decimal = ZERO) -> Portfolio:

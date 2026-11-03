@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
+import pytest
+
 from oq.domain.intent import Intent
 from oq.domain.portfolio import Portfolio
 from oq.execution.broker import BrokerContext, BrokerResult
@@ -7,7 +11,7 @@ from oq.execution.journal import NullJournal
 from oq.execution.oms import OrderManager
 from oq.execution.paper import PaperBroker
 from oq.risk import RiskContext, RiskEngine
-from oq.types import Book, D, InstType, Side
+from oq.types import Book, D, InstType, OrderStatus, Side
 
 
 def _setup(config, instruments, portfolio):
@@ -224,3 +228,48 @@ def test_unwind_closes_the_filled_leg_when_the_sibling_fails(config, instruments
     )
     assert result.errors
     assert portfolio.get("BTC-USDT", Book.CARRY) is None
+
+
+@pytest.mark.parametrize("failure", ["timeout", "partial"])
+def test_unwind_failure_preserves_the_remaining_exposure(config, instruments, failure):
+    portfolio = Portfolio(cash=D("10000"))
+    oms, journal, engine = _setup(config, instruments, portfolio)
+
+    class UncertainUnwindBroker(PaperBroker):
+        def place(self, order, instrument, ctx):
+            if order.symbol == "BTC-USDT-SWAP":
+                return BrokerResult(rejected="venue said no")
+            if order.reduce_only:
+                if failure == "timeout":
+                    raise TimeoutError("response lost")
+                fill = super().place(order, instrument, ctx).fills[0]
+                return BrokerResult(fills=[replace(fill, qty=fill.qty / 2)])
+            return super().place(order, instrument, ctx)
+
+    now = 1_700_000_000_000
+    intent = Intent.open_pair(
+        strategy_id="carry_basis",
+        ts_ms=now,
+        spot_symbol="BTC-USDT",
+        perp_symbol="BTC-USDT-SWAP",
+        notional_pct=D("0.05"),
+    )
+    marks = {"BTC-USDT": D("60000"), "BTC-USDT-SWAP": D("60000")}
+    decision = engine.evaluate(intent, _ctx(portfolio, marks))
+    assert decision.approved
+    result = oms.execute(
+        decision,
+        intent,
+        UncertainUnwindBroker(),
+        BrokerContext(now_ms=now, price=D("60000"), prices=marks),
+    )
+
+    assert portfolio.get("BTC-USDT", Book.CARRY) is not None
+    assert result.orders[-1].status is (
+        OrderStatus.UNKNOWN if failure == "timeout" else OrderStatus.PARTIAL
+    )
+    assert any("unwind" in error for error in result.errors)
+    assert any(
+        payload.get("kind") == ("unwind_uncertain" if failure == "timeout" else "unwind_partial")
+        for _, payload, _ in journal.events
+    )

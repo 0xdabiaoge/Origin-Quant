@@ -20,7 +20,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal
 
-from oq.types import ZERO, Book, D, InstType, PosSide
+from oq.types import DEFAULT_TP1_R, ZERO, Book, D, InstType, PosSide
 
 
 @dataclass(slots=True)
@@ -43,7 +43,7 @@ class Position:
     initial_stop_px: Decimal | None = None
     tp1_done: bool = False
     tp2_done: bool = False
-    tp1_r: Decimal = D("1.5")
+    tp1_r: Decimal = DEFAULT_TP1_R
     tp2_r: Decimal = D("3.0")
     time_stop_bars: int | None = None
     opened_bar: int | None = None

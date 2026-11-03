@@ -271,6 +271,22 @@ def test_cost_gate_rejects_a_trade_with_no_edge(config, instruments, portfolio):
     assert decision.failed_gate() in {"risk_reward", "cost_edge"}
 
 
+def test_missing_ladder_cannot_bypass_minimum_risk_reward(config, instruments, portfolio):
+    strict = config.model_copy(update={"risk": config.risk.model_copy(update={"min_rr": D("1.6")})})
+    intent = Intent.open_long(
+        strategy_id="ai_research",
+        symbol="BTC-USDT-SWAP",
+        ts_ms=1,
+        stop_px=D("59640"),
+        ref_px=D("60000"),
+    )
+    decision = _engine(strict, instruments).evaluate(
+        intent, _ctx(portfolio, {"BTC-USDT-SWAP": D("60000")})
+    )
+    assert not decision.approved
+    assert decision.failed_gate() == "risk_reward"
+
+
 def test_decision_records_every_gate_it_evaluated(config, instruments, portfolio):
     decision = _engine(config, instruments).evaluate(
         _long_intent(), _ctx(portfolio, {"BTC-USDT-SWAP": D("60000")})

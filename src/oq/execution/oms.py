@@ -6,8 +6,8 @@ that changes.
 
 Failure handling that the reference projects lacked:
 
-* multi-leg entries unwind the filled leg when a sibling leg fails, so the
-  book is never left with half a hedge;
+* a rejected sibling leg triggers an unwind attempt; ambiguous outcomes must
+  be reconciled before taking further risk;
 * a venue that returns no acknowledgement leaves the order in ``UNKNOWN``
   instead of guessing;
 * every exit is ``reduce_only`` so a stale intent can never open a position.
@@ -27,7 +27,7 @@ from oq.domain.position import Position
 from oq.execution.broker import Broker, BrokerContext
 from oq.execution.journal import Journal
 from oq.storage.storage import TradeRecord
-from oq.types import ZERO, Action, D, Instrument, OrderStatus, OrderType, Side
+from oq.types import DEFAULT_TP1_R, ZERO, Action, D, Instrument, OrderStatus, OrderType, Side
 
 
 @dataclass(slots=True)
@@ -81,24 +81,36 @@ class OrderManager:
 
         snapshots = self._snapshots(decision, intent)
         filled: list[tuple[Order, Instrument]] = []
+        ambiguous = False
 
         for index, plan in enumerate(decision.legs):
             instrument = self.instruments.get(plan.symbol)
             if instrument is None:
                 result.errors.append(f"unknown instrument {plan.symbol}")
-                continue
+                break
             order = self._build_order(index, plan, intent, decision, ctx)
             self.journal.record_order(order)
             result.orders.append(order)
 
-            broker_result = broker.place(order, instrument, ctx)
+            try:
+                broker_result = broker.place(order, instrument, ctx)
+            except Exception as exc:
+                # A transport error can occur after the exchange accepted the
+                # request.  Do not treat it as a rejection or submit a sibling.
+                order.transition(
+                    OrderStatus.UNKNOWN, ts_ms=ctx.now_ms, error="submission uncertain"
+                )
+                self.journal.record_order(order)
+                result.errors.append(f"{plan.symbol}: submission uncertain: {type(exc).__name__}")
+                ambiguous = True
+                break
             if broker_result.rejected:
                 order.transition(
                     OrderStatus.REJECTED, ts_ms=ctx.now_ms, error=broker_result.rejected
                 )
                 self.journal.record_order(order)
                 result.errors.append(f"{plan.symbol}: {broker_result.rejected}")
-                continue
+                break
 
             if broker_result.venue_order_id:
                 order.venue_order_id = broker_result.venue_order_id
@@ -106,7 +118,8 @@ class OrderManager:
                 order.transition(OrderStatus.UNKNOWN, ts_ms=ctx.now_ms, error="no acknowledgement")
                 self.journal.record_order(order)
                 result.errors.append(f"{plan.symbol}: no acknowledgement")
-                continue
+                ambiguous = True
+                break
 
             order.transition(OrderStatus.ACKED, ts_ms=ctx.now_ms)
             for fill in broker_result.fills:
@@ -116,9 +129,21 @@ class OrderManager:
                 self._apply_fill(fill, plan, intent, ctx)
             self.journal.record_order(order)
             filled.append((order, instrument))
+            if order.status is OrderStatus.PARTIAL:
+                # The remainder may still fill. Unwinding now could create an
+                # unhedged position after the venue fills the remaining order.
+                result.errors.append(f"{plan.symbol}: partial fill requires reconciliation")
+                ambiguous = True
+                break
 
         # A partially executed hedge is worse than no hedge.
-        if result.errors and len(intent.legs) > 1 and intent.action is Action.OPEN and filled:
+        if (
+            result.errors
+            and not ambiguous
+            and len(intent.legs) > 1
+            and intent.action is Action.OPEN
+            and filled
+        ):
             for order, instrument in filled:
                 self._unwind(order, instrument, broker, ctx, result)
 
@@ -181,13 +206,16 @@ class OrderManager:
             book=intent.book,
             created_ms=ctx.now_ms,
             updated_ms=ctx.now_ms,
+            tags={"stop_px": str(plan.stop_px)}
+            if intent.action is Action.OPEN and plan.stop_px is not None
+            else {},
         )
 
     # -- application ----------------------------------------------------
     def _apply_fill(self, fill: Fill, plan: LegPlan, intent: Intent, ctx: BrokerContext) -> None:
         instrument = self.instruments[plan.symbol]
         time_stop = intent.time_stop_bars
-        tp1_r = intent.tp_ladder[0][0] if intent.tp_ladder else D("1.5")
+        tp1_r = intent.tp_ladder[0][0] if intent.tp_ladder else DEFAULT_TP1_R
         tp2_r = intent.tp_ladder[1][0] if len(intent.tp_ladder) > 1 else D("3.0")
         position, _ = self.portfolio.apply_fill(
             symbol=fill.symbol,
@@ -229,7 +257,7 @@ class OrderManager:
             # R must be measured against the stop the trade was *sized* with.
             # A trailed or breakeven stop would shrink the denominator and
             # inflate every winner's R.
-            original_stop = position.initial_stop_px or position.stop_px
+            original_stop = position.initial_stop_px
             risk = abs(position.avg_px - original_stop) if original_stop else ZERO
             out.append(
                 _Snap(
@@ -329,9 +357,28 @@ class OrderManager:
             updated_ms=ctx.now_ms,
         )
         self.journal.record_order(unwind)
-        broker_result = broker.place(unwind, instrument, ctx)
+        result.orders.append(unwind)
+        try:
+            broker_result = broker.place(unwind, instrument, ctx)
+        except Exception as exc:
+            # A failed response is not evidence that the corrective order was
+            # rejected. Persist UNKNOWN so the remaining exposure is visible.
+            unwind.transition(OrderStatus.UNKNOWN, ts_ms=ctx.now_ms, error="unwind uncertain")
+            self.journal.record_order(unwind)
+            result.errors.append(f"unwind uncertain for {order.symbol}: {type(exc).__name__}")
+            self.journal.record_event(
+                EventType.ERROR,
+                {"kind": "unwind_uncertain", "symbol": order.symbol, "qty": str(order.filled_qty)},
+                ts_ms=ctx.now_ms,
+                symbol=order.symbol,
+            )
+            return
         if broker_result.rejected or not broker_result.fills:
-            unwind.transition(OrderStatus.UNKNOWN, ts_ms=ctx.now_ms, error="unwind failed")
+            unwind.transition(
+                OrderStatus.REJECTED if broker_result.rejected else OrderStatus.UNKNOWN,
+                ts_ms=ctx.now_ms,
+                error="unwind failed",
+            )
             self.journal.record_order(unwind)
             result.errors.append(f"unwind failed for {order.symbol}")
             self.journal.record_event(
@@ -358,9 +405,17 @@ class OrderManager:
                 strategy_id=order.strategy_id or "",
             )
         self.journal.record_order(unwind)
+        if unwind.status is not OrderStatus.FILLED:
+            result.errors.append(f"unwind incomplete for {order.symbol}")
         self.journal.record_event(
             EventType.ERROR,
-            {"kind": "hedge_unwound", "symbol": order.symbol, "qty": str(order.filled_qty)},
+            {
+                "kind": "hedge_unwound"
+                if unwind.status is OrderStatus.FILLED
+                else "unwind_partial",
+                "symbol": order.symbol,
+                "qty": str(unwind.filled_qty),
+            },
             ts_ms=ctx.now_ms,
             symbol=order.symbol,
         )

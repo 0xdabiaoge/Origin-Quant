@@ -181,6 +181,7 @@ class Config(BaseModel):
     data: DataSettings = Field(default_factory=DataSettings)
     risk: RiskSettings = Field(default_factory=RiskSettings)
     root: Path = Field(default_factory=Path.cwd)
+    config_dir: Path | None = None
     hash: str = ""
 
     @model_validator(mode="after")
@@ -220,7 +221,7 @@ class Config(BaseModel):
 
     # -- persistence ---------------------------------------------------
     def canonical(self) -> dict[str, Any]:
-        payload = self.model_dump(mode="json", exclude={"root", "hash"})
+        payload = self.model_dump(mode="json", exclude={"root", "config_dir", "hash"})
         return _jsonable(payload)
 
     def compute_hash(self) -> str:
@@ -273,8 +274,6 @@ def _env_overrides(payload: dict[str, Any]) -> dict[str, Any]:
         app["data_dir"] = data_dir
     if level := os.getenv("OQ_LOG_LEVEL"):
         app["log_level"] = level
-    if os.getenv("OQ_LIVE") == "1":
-        app["live_trading"] = True
     payload["app"] = app
     return payload
 
@@ -304,6 +303,7 @@ def load_config(config_dir: str | Path = "config", *, root: Path | None = None) 
 
     payload = _env_overrides(payload)
     payload["root"] = project_root
+    payload["config_dir"] = cdir
 
     config = Config.model_validate(payload)
     config = config.model_copy(

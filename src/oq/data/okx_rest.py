@@ -157,8 +157,13 @@ class OkxRest:
             if self.demo:
                 headers["x-simulated-trading"] = "1"
 
+        # A private mutation may already have been accepted when a response is
+        # lost.  Retrying it can turn a successful placement into a duplicate
+        # or a misleading rejection.  Leave the result ambiguous for the OMS
+        # and reconcile by client order ID instead.
+        retries = 0 if private and method.upper() != "GET" else self.settings.max_retries
         last_error: Exception | None = None
-        for attempt in range(self.settings.max_retries + 1):
+        for attempt in range(retries + 1):
             self._limiter.acquire()
             try:
                 response = self._client.request(
@@ -173,17 +178,19 @@ class OkxRest:
                 data = response.json()
             except (httpx.HTTPError, json.JSONDecodeError) as exc:
                 last_error = exc
-                self._backoff(attempt)
+                if attempt < retries:
+                    self._backoff(attempt)
                 continue
             except OkxError as exc:
                 last_error = exc
-                self._backoff(attempt)
+                if attempt < retries:
+                    self._backoff(attempt)
                 continue
 
             code = str(data.get("code", "0"))
             if code != "0":
                 error = OkxError(code, str(data.get("msg", "")), request_path)
-                if error.retryable and attempt < self.settings.max_retries:
+                if error.retryable and attempt < retries:
                     last_error = error
                     self._backoff(attempt)
                     continue
@@ -218,8 +225,8 @@ class OkxRest:
         return Quote(
             symbol=symbol,
             ts_ms=int(row["ts"]),
-            bid=D(row.get("bidPx") or row["last"]),
-            ask=D(row.get("askPx") or row["last"]),
+            bid=D(row.get("bidPx") or 0),
+            ask=D(row.get("askPx") or 0),
             last=D(row["last"]),
             bid_size=D(row.get("bidSz") or 0),
             ask_size=D(row.get("askSz") or 0),
@@ -243,17 +250,24 @@ class OkxRest:
         return out
 
     def funding_history(
-        self, symbol: str, *, limit: int = 100, before_ms: int | None = None
+        self, symbol: str, *, limit: int = 100, after_ms: int | None = None
     ) -> list[FundingPoint]:
         rows = self._request(
             "GET",
             "/api/v5/public/funding-rate-history",
-            params={"instId": symbol, "limit": limit, "before": before_ms},
+            params={"instId": symbol, "limit": limit, "after": after_ms},
         )
-        out = [
-            FundingPoint(symbol=symbol, ts_ms=int(row["fundingTime"]), rate=D(row["fundingRate"]))
-            for row in rows
-        ]
+        out = []
+        for row in rows:
+            # OKX defines fundingRate as a forecast and realizedRate as the
+            # actual settlement rate. Never silently book a forecast as paid.
+            realized = row.get("realizedRate")
+            if realized is None or str(realized).strip() == "":
+                raise ValueError(f"missing realized funding rate for {symbol}")
+            rate = D(realized)
+            if not rate.is_finite():
+                raise ValueError(f"invalid realized funding rate for {symbol}")
+            out.append(FundingPoint(symbol=symbol, ts_ms=int(row["fundingTime"]), rate=rate))
         out.sort(key=lambda item: item.ts_ms)
         return out
 
@@ -328,11 +342,13 @@ class OkxRest:
             private=True,
         )
 
-    def algo_orders(self, symbol: str) -> list[dict[str, Any]]:
+    def algo_orders(self, symbol: str, *, order_type: str = "oco") -> list[dict[str, Any]]:
+        if order_type not in {"oco", "conditional"}:
+            raise ValueError("unsupported algo order type")
         return self._request(
             "GET",
             "/api/v5/trade/orders-algo-pending",
-            params={"instId": symbol, "ordType": "oco"},
+            params={"instId": symbol, "ordType": order_type, "limit": 100},
             private=True,
         )
 

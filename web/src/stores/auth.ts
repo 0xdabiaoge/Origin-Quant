@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
-import { v1, withoutUnauthorizedRedirect } from "@/api/client";
+import { v1 } from "@/api/client";
 import type { Me } from "@/api/types";
 
 export const useAuthStore = defineStore("auth", () => {
@@ -13,7 +13,7 @@ export const useAuthStore = defineStore("auth", () => {
       // A logged-out visitor is the normal case here, not an expired session.
       // /auth/me answers 200 with authenticated:false rather than 401, so an
       // anonymous page load does not litter the console with an error.
-      const me = await withoutUnauthorizedRedirect(() => v1.me());
+      const me = await v1.me();
       user.value = me.authenticated
         ? ({ ...me } as Me)
         : null;

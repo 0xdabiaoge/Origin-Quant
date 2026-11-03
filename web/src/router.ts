@@ -26,6 +26,10 @@ const router = createRouter({
       meta: { requiresAuth: true, requiresOwner: true },
       children: [
         { path: "", name: "admin-overview", component: () => import("@/views/admin/OverviewPage.vue") },
+        { path: "ai", name: "admin-ai", component: () => import("@/views/admin/AiPage.vue") },
+        { path: "news", name: "admin-news", component: () => import("@/views/admin/NewsPage.vue") },
+        { path: "venue", name: "admin-venue", component: () => import("@/views/admin/VenuePage.vue") },
+        { path: "notifications", name: "admin-notifications", component: () => import("@/views/admin/NotificationsPage.vue") },
         { path: "users", name: "admin-users", component: () => import("@/views/admin/UsersPage.vue") },
         { path: "audit", name: "admin-audit", component: () => import("@/views/admin/AuditPage.vue") },
         { path: "config", name: "admin-config", component: () => import("@/views/admin/ConfigPage.vue") },

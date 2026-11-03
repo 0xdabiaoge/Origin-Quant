@@ -13,33 +13,33 @@ const sections: Section[] = [
     id: "intro",
     title: "系统是什么",
     body: [
-      "Origin Quant 是一个单进程、单写者的加密货币量化交易引擎。信号生成、风控裁决、订单执行、成交对账与审计日志都在同一个进程内完成，共享同一个时钟。",
-      "它刻意不采用微服务架构：在单机交易场景里，分布式带来的时钟漂移、消息重放与部分失败，只会制造更多需要解释的状态。",
+      "Origin Quant 是一个面向自用的量化交易工作台，包含行情、策略、风险检查、订单管理与审计。",
+      "AI 研究结果、纸面模拟与实盘交易是不同的运行过程，应以页面显示的实际状态为准。",
     ],
   },
   {
     id: "quickstart",
     title: "快速开始（本地）",
-    body: ["安装依赖并启动控制面。默认使用纸面撮合，不会下真实订单。"],
+    body: ["安装依赖并启动控制面。合成数据回测在内存中生成数据；不要在已有行情目录中运行合成数据灌入命令，它可能覆盖数据。"],
     code: `python -m venv .venv
 .venv/Scripts/activate        # Windows
 source .venv/bin/activate     # Linux / macOS
 pip install -e ".[dev]"
 
-oq seed --source synthetic --days 30
+oq backtest --source synthetic --days 30
 oq serve                      # http://127.0.0.1:8000`,
   },
   {
     id: "modes",
     title: "运行模式与安全闸门",
     body: [
-      "系统有两道独立闸门保护实盘：配置文件里的 app.live_trading 必须为 true，同时环境变量 OQ_LIVE 必须为 1，且 mode 必须是 live。任意一道不满足，下单都会被拒绝。",
-      "这是刻意的冗余：单一开关被误改的概率远高于两个不同来源的开关同时被误改。",
+      "系统支持纸面和实盘模式。实盘下单需要 live 模式、配置中的 live_trading=true 和 OQ_LIVE=1 同时满足；交易所 demo / live 环境也应单独核对。",
+      "接入实盘前应检查实际生效配置、账户环境、风控和交易所保护状态，并在隔离模拟环境验证。",
     ],
-    code: `# config/app.toml
-[app]
-mode = "paper"          # paper | live
-live_trading = false
+    code: `# config/base.yaml
+app:
+  mode: paper           # paper | live
+  live_trading: false
 
 # 环境变量
 OQ_LIVE=0`,
@@ -48,8 +48,8 @@ OQ_LIVE=0`,
     id: "books",
     title: "双账本",
     body: [
-      "系统维护两个独立的账本：carry（套利/资金费率）与 directional（方向性）。两者各有自己的保证金占用与风险预算，互不挪用。",
-      "平仓订单走结构性闸门，不会被开仓用的条件挡住——否则风控收紧时会出现无法平仓的死锁。",
+      "系统按 carry（套利/资金费率）和 directional（方向性）分别记录交易；两者共享账户权益、总杠杆等组合风险上限。",
+      "退出意图通过结构性风控检查；数据缺失、执行失败或交易所不可用仍可能影响平仓，应核对实际订单与持仓。",
     ],
   },
   {
@@ -57,7 +57,7 @@ OQ_LIVE=0`,
     title: "角色与权限",
     body: [
       "owner：全部权限，包含用户管理、配置查看与危险操作区。",
-      "trader：可以驱动引擎（暂停、恢复、手动跑周期），不能改配置或管理用户。",
+      "trader：可以驱动引擎，包括暂停、恢复、熔断、平仓和手动跑周期；不能管理用户或解除熔断。",
       "viewer：只读。",
       "首次部署时用 OQ_ADMIN_PASSWORD_HASH 提供的密码以 operator 身份登录，之后建议在管理后台创建正式账号。",
     ],
@@ -70,7 +70,7 @@ OQ_LIVE=0`,
       "交互式文档在 /api/docs。",
     ],
     code: `GET  /api/v1/public/brand        # 品牌与版本，无需登录
-GET  /api/v1/public/metrics      # 公开净值曲线，不含持仓
+GET  /api/v1/public/metrics      # 公开指标按服务端配置提供
 GET  /api/v1/app/overview        # 工作台总览
 GET  /api/v1/admin/users         # 用户列表（owner）
 POST /api/v1/admin/danger/kill    # 熔断（需输入确认词）`,
@@ -79,23 +79,15 @@ POST /api/v1/admin/danger/kill    # 熔断（需输入确认词）`,
     id: "deploy",
     title: "部署到服务器",
     body: [
-      "镜像由 CI 构建并推送到 GHCR，服务器只负责拉取。版本号由 v1.* 标签数量推导，每次合并到 main 自动递增。",
+      "部署前应备份数据库、行情与配置；检查目标镜像、部署环境和回滚方式，完成健康及实际行为验证。",
     ],
-    code: `# 服务器上
-cd /opt/origin-quant
-git pull
-OQ_IMAGE_TAG=v1.1.0 docker compose pull
-docker compose up -d
-
-# 回滚只需改回上一个标签
-OQ_IMAGE_TAG=v1.0.2 docker compose up -d`,
   },
   {
     id: "limits",
     title: "已知限制",
     body: [
-      "策略在合成数据上的期望值为负——成本（手续费 + 资金费）吃掉了全部边际。这是真实结论，不是配置问题。",
-      "没有做压力测试与安全渗透测试。公网暴露前请自行评估。",
+      "模拟、合成数据回测与真实交易的结果不同，AI 分析也不保证收益。",
+      "公开部署与实盘前，应独立验证权限、订单恢复、保护单和交易所账户状态。",
       "单进程意味着单点故障：进程挂掉，整个交易链路停止。这对单操作员场景是可接受的取舍。",
     ],
   },

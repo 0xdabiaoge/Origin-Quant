@@ -8,6 +8,7 @@ import StatCard from "@/components/StatCard.vue";
 import EmptyState from "@/components/EmptyState.vue";
 import EChart from "@/components/EChart.vue";
 import { useToast } from "@/components/useToast";
+import { useAuthStore } from "@/stores/auth";
 import type { EChartsOption } from "echarts";
 
 const data = ref<Overview | null>(null);
@@ -15,12 +16,15 @@ const loading = ref(true);
 const err = ref("");
 const busy = ref(false);
 const toast = useToast();
+const auth = useAuthStore();
+const lastSuccessfulRefresh = ref<number | null>(null);
 let timer: number | undefined;
 
 async function load(silent = false) {
   if (!silent) loading.value = true;
   try {
     data.value = await v1.overview();
+    lastSuccessfulRefresh.value = Date.now();
     err.value = "";
   } catch (e) {
     err.value = e instanceof Error ? e.message : "加载失败";
@@ -40,7 +44,11 @@ async function runCycle() {
   try {
     const res = await v1.cycle();
     const skipped = res.skipped ? `（跳过：${res.skipped}）` : "";
-    toast.ok(`周期完成 · 意图 ${res.intents ?? 0} / 通过 ${res.approved ?? 0} / 成交 ${res.fills ?? 0}${skipped}`);
+    const errors = Array.isArray(res.errors) ? res.errors : [];
+    const summary = `周期已返回 · 意图 ${res.intents ?? '未知'} / 通过 ${res.approved ?? '未知'} / 成交 ${res.fills ?? '未知'}${skipped}`;
+    if (errors.length) toast.error(`${summary}；存在 ${errors.length} 项错误，请查看日志和交易所状态`);
+    else if (res.skipped) toast.info(summary);
+    else toast.ok(summary);
     await load(true);
   } catch (e) {
     toast.error(e instanceof Error ? e.message : "执行失败");
@@ -95,6 +103,7 @@ const sessionPnl = computed(() => {
 
 const stats = computed(() => data.value?.stats);
 const positions = computed(() => data.value?.positions ?? []);
+const localBookAvailable = computed(() => !!data.value && (data.value.equity !== null || positions.value.length > 0));
 const carryCount = computed(() => positions.value.filter((p) => p.book === "carry").length);
 const dirCount = computed(() => positions.value.filter((p) => p.book !== "carry").length);
 </script>
@@ -103,7 +112,7 @@ const dirCount = computed(() => positions.value.filter((p) => p.book !== "carry"
   <div>
     <PageHeader title="总览" :subtitle="`模式 ${data?.mode ?? '—'} · 版本 ${data?.version ?? '—'} · 最近周期 ${fmtAgo(data?.last_cycle_ms)}`">
       <template #actions>
-        <button class="btn" :disabled="busy" @click="runCycle">
+        <button v-if="auth.can('trader')" class="btn" :disabled="busy" @click="runCycle">
           {{ busy ? "执行中…" : "手动跑一个周期" }}
         </button>
         <button class="btn btn-ghost" @click="load()">刷新</button>
@@ -111,9 +120,10 @@ const dirCount = computed(() => positions.value.filter((p) => p.book !== "carry"
     </PageHeader>
 
     <p v-if="err" class="mb-4 rounded-lg border border-danger-600/40 bg-danger-600/10 px-3 py-2 text-sm text-danger-500">
-      {{ err }}
+      {{ err }}<span v-if="lastSuccessfulRefresh">；当前仍显示 {{ fmtTime(lastSuccessfulRefresh) }} 的旧快照，请勿视为实时状态。</span>
     </p>
 
+    <p v-if="data?.positions.length" class="mb-3 text-xs text-mute-500">净值使用本地可用价格估算；价格缺失或过期时显示未知，请核对交易所实际权益。</p>
     <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
       <StatCard label="净值" :value="data?.equity ? fmtMoney(data.equity) : '—'" :hint="`现金 ${data?.cash ? fmtMoney(data.cash) : '—'}`" />
       <StatCard
@@ -126,12 +136,12 @@ const dirCount = computed(() => positions.value.filter((p) => p.book !== "carry"
         label="当前回撤"
         :value="lastPoint ? fmtPct(lastPoint.drawdown) : '—'"
         :tone="lastPoint && Number(lastPoint.drawdown) > 0.05 ? 'down' : 'neutral'"
-        :hint="lastPoint ? `热度 ${fmtPct(lastPoint.heat ?? 0)}` : ''"
+        :hint="lastPoint ? `热度 ${fmtPct(lastPoint.heat)}` : ''"
       />
       <StatCard
         label="持仓"
-        :value="String(positions.length)"
-        :hint="`套利 ${carryCount} · 方向 ${dirCount}`"
+        :value="data ? String(positions.length) : '—'"
+        :hint="data ? `套利 ${carryCount} · 方向 ${dirCount}` : ''"
       />
     </div>
 
@@ -150,7 +160,7 @@ const dirCount = computed(() => positions.value.filter((p) => p.book !== "carry"
         <dl class="space-y-2.5 text-sm">
           <div class="flex items-baseline justify-between">
             <dt class="text-mute-400">成交笔数</dt>
-            <dd class="tnum">{{ stats?.trades ?? 0 }}</dd>
+            <dd class="tnum">{{ stats?.trades ?? '—' }}</dd>
           </div>
           <div class="flex items-baseline justify-between">
             <dt class="text-mute-400">胜率</dt>
@@ -179,7 +189,7 @@ const dirCount = computed(() => positions.value.filter((p) => p.book !== "carry"
       <div class="card">
         <div class="flex items-center justify-between border-b border-ink-800 px-4 py-3">
           <span class="label">持仓</span>
-          <span class="text-[11px] text-mute-500">{{ positions.length }} 条</span>
+          <span class="text-[11px] text-mute-500">{{ localBookAvailable ? `${positions.length} 条` : '未知' }}</span>
         </div>
         <div v-if="positions.length" class="overflow-x-auto">
           <table class="table-base">
@@ -204,13 +214,13 @@ const dirCount = computed(() => positions.value.filter((p) => p.book !== "carry"
             </tbody>
           </table>
         </div>
-        <EmptyState v-else title="空仓" hint="当前没有任何持仓。" />
+        <EmptyState v-else :title="localBookAvailable ? '没有本地持仓记录' : '持仓状态未知'" hint="请结合交易所实际持仓核对。" />
       </div>
 
       <div class="card">
         <div class="flex items-center justify-between border-b border-ink-800 px-4 py-3">
           <span class="label">最近决策</span>
-          <span class="text-[11px] text-mute-500">{{ data?.recent_decisions.length ?? 0 }} 条</span>
+          <span class="text-[11px] text-mute-500">{{ data ? `${data.recent_decisions.length} 条` : '未知' }}</span>
         </div>
         <div v-if="data?.recent_decisions.length" class="max-h-[320px] overflow-y-auto">
           <table class="table-base">

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from oq.data.features import atr, ema, rolling_max_prev, rsi
 from oq.strategy.base import SymbolView
@@ -169,6 +170,63 @@ def test_position_manager_moves_stop_to_breakeven_at_one_r():
     assert intents
     assert intents[0].action.value == "move_stop"
     assert intents[0].stop_px > D("60000")
+
+
+@pytest.mark.parametrize("is_long", [True, False])
+def test_moved_stop_does_not_change_the_initial_risk_multiple(is_long):
+    from types import SimpleNamespace
+
+    from oq.domain.portfolio import Portfolio
+    from oq.types import Book, InstType, Side
+
+    portfolio = Portfolio(cash=D("10000"))
+    position, _ = portfolio.apply_fill(
+        symbol="BTC-USDT-SWAP",
+        book=Book.DIRECTIONAL,
+        inst_type=InstType.SWAP,
+        side=Side.BUY if is_long else Side.SELL,
+        qty=D("1"),
+        px=D("1000"),
+        fee=D("0"),
+        ts_ms=1000,
+        stop_px=D("900") if is_long else D("1100"),
+    )
+    position.move_stop(D("1005") if is_long else D("995"))
+    view = SimpleNamespace(
+        price=D("1100") if is_long else D("900"),
+        last_high=D("1120") if is_long else D("990"),
+        last_low=D("1010") if is_long else D("880"),
+    )
+    ctx = SimpleNamespace(now_ms=2000, bar_index=None)
+    # 1.2R has not reached the 1.5R first target; the moved stop is not R.
+    assert build_position_manager()._evaluate(position, view, ctx) == []
+
+
+def test_unknown_original_stop_retains_hard_stop_for_legacy_position():
+    from types import SimpleNamespace
+
+    from oq.domain.portfolio import Portfolio
+    from oq.types import Book, InstType, Side
+
+    portfolio = Portfolio(cash=D("10000"))
+    position, _ = portfolio.apply_fill(
+        symbol="BTC-USDT-SWAP",
+        book=Book.DIRECTIONAL,
+        inst_type=InstType.SWAP,
+        side=Side.BUY,
+        qty=D("1"),
+        px=D("1000"),
+        fee=D("0"),
+        ts_ms=1000,
+        stop_px=D("1005"),
+    )
+    position.initial_stop_px = None
+    view = SimpleNamespace(price=D("1010"), last_high=D("1020"), last_low=D("1000"))
+    intents = build_position_manager()._evaluate(
+        position, view, SimpleNamespace(now_ms=2000, bar_index=None)
+    )
+    assert len(intents) == 1 and intents[0].action.value == "close"
+    assert intents[0].tags["reason"].startswith("stop")
 
 
 def test_carry_strategy_needs_a_paid_basis(config, series):

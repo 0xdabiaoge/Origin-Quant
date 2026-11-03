@@ -153,7 +153,7 @@ export interface PublicMetrics {
   version: string;
   uptime_s: number;
   last_cycle_ms: number;
-  stats: TradeStats;
+  stats: TradeStats | null;
   equity: { ts_ms: number; equity: Money; drawdown: Money }[];
 }
 
@@ -161,8 +161,8 @@ export interface PositionsPayload {
   positions: Position[];
   equity: Money | null;
   cash: Money | null;
-  heat?: Money;
-  open_risk?: Money;
+  heat?: Money | null;
+  open_risk?: Money | null;
 }
 
 export interface OrdersPayload {
@@ -187,4 +187,79 @@ export interface BacktestResult {
   trades?: unknown[];
   equity_curve?: unknown[];
   error?: string;
+}
+
+export interface AiConfig {
+  enabled: boolean;
+  provider: string;
+  model: string;
+  endpoint: string;
+  api_key_env: string;
+  timeout_s: number;
+  has_key: boolean;
+  auto_paper_enabled: boolean;
+  paper_confirmation_enabled: boolean;
+  auto_symbol: string;
+  auto_news_enabled: boolean;
+  news_interval_s: number;
+  council_enabled?: boolean;
+  council_seats?: AiCouncilSeat[];
+}
+
+export interface AiCouncilSeat {
+  role: string;
+  provider: string;
+  model: string;
+  endpoint: string;
+  api_key_env: string;
+  timeout_s: number;
+}
+
+export interface AiProposal {
+  action: "wait" | "long" | "short";
+  symbol: string;
+  stop_px: string | number | null;
+  rationale: string;
+}
+
+export interface AiDecision {
+  id: number | string;
+  ts_ms: number;
+  symbol: string;
+  status: string;
+  proposal: AiProposal | null;
+  provider: string;
+  model: string;
+  error: string | null;
+  execution?: string;
+  strategy_id?: string;
+  confirmed?: boolean;
+  confirmation_reason?: string;
+  snapshot_hash?: string;
+  snapshot?: { captured_ms?: number; last_candle_open_ms?: number; reference_price?: string; data_source?: string; news_available?: boolean };
+  usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+  council?: { role: string; provider: string; model: string; status: string; proposal?: AiProposal | null; usage?: { total_tokens?: number } }[];
+}
+
+export interface NewsItem {
+  id: string;
+  title: string;
+  summary: string;
+  url: string;
+  source: string;
+  published_ms: number | null;
+  fetched_ms: number | null;
+}
+
+export interface VenueReadback {
+  observed_ms: number;
+  venue_environment: string;
+  read_only: boolean;
+  ledger_changed: boolean;
+  reconciled: boolean;
+  orders_truncated: boolean;
+  positions_truncated: boolean;
+  time_budget_exceeded: boolean;
+  orders: { symbol: string; client_id: string; local_status: string; observation: string; venue_state: string | null; venue_filled_base: string | null; note: string; venue_order_id?: string }[];
+  protection: { symbol: string; book: string; local_qty_base: string; read_status: string; protection_status: string; note: string; legs: { algo_id: string; state: string; side: string; position_side: string; stop_trigger: string; trigger_type: string; venue_size: string; size_unit: string; attribution: string }[] }[];
 }

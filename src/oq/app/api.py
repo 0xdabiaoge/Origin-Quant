@@ -27,6 +27,7 @@ from oq.app.auth import (
     issue_session,
     require_auth,
     require_write,
+    session_stamp,
     touch_login,
 )
 from oq.backtest import (
@@ -84,18 +85,25 @@ async def trading_status(
     store = ctx.store
     portfolio = ctx.orchestrator.portfolio if ctx.orchestrator else None
     marks = ctx.marks or {}
-    equity = portfolio.equity(marks) if portfolio else D("0")
+    from oq.app.admin_api import _marks_complete
+
+    complete = bool(portfolio is not None and _marks_complete(ctx, portfolio, marks))
+    positions = []
+    if portfolio:
+        for position in portfolio.positions_of():
+            row = position.as_dict(marks.get(position.symbol, position.avg_px))
+            if not complete:
+                row.update(mark_px=None, notional=None, unrealized=None, margin_used=None)
+            positions.append(row)
     return {
         "mode": ctx.config.app.mode,
         "live_trading": ctx.config.app.live_trading,
         "halted": bool(ctx.orchestrator and ctx.orchestrator.halted),
         "kill_switch": bool(ctx.orchestrator and ctx.orchestrator._kill),
-        "equity": str(equity),
-        "cash": str(portfolio.cash) if portfolio else "0",
-        "positions": [p.as_dict(marks.get(p.symbol, p.avg_px)) for p in portfolio.positions_of()]
-        if portfolio
-        else [],
-        "snapshot": portfolio.snapshot(marks) if portfolio else {},
+        "equity": str(portfolio.equity(marks)) if complete and portfolio else None,
+        "cash": str(portfolio.cash) if portfolio else None,
+        "positions": positions,
+        "snapshot": portfolio.snapshot(marks) if complete and portfolio else None,
         "config_hash": ctx.config.hash,
         "last_cycle_ms": store.last_cycle_ms(),
         "stats": store.stats(),
@@ -144,6 +152,9 @@ async def login(request: Request, body: LoginBody, response: Response) -> dict[s
     get in even if they lock themselves out of the users table; once a user is
     created that matches the submitted username, the table wins.
     """
+    peer = request.client.host if request.client else "unknown"
+    if not request.app.state.login_limiter.allow(peer):
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "too many login attempts")
     ctx = _state(request)
     username = (body.username or "operator").strip()
     with ctx.db.tx() as conn:
@@ -154,11 +165,16 @@ async def login(request: Request, body: LoginBody, response: Response) -> dict[s
             touch_login(conn, username)
             role = str(user["role"])
         else:
+            if username != "operator":
+                raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid credentials")
             bootstrap = bootstrap_password_hash()
             if not bootstrap or not check_password(bootstrap, body.password):
                 raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid credentials")
             role = ROLE_OWNER
-    token = issue_session(username, role)
+    request.app.state.login_limiter.reset(peer)
+    token = issue_session(
+        username, role, kind="user" if user is not None else "bootstrap", stamp=session_stamp(user)
+    )
     response.set_cookie(
         COOKIE_NAME,
         token,
@@ -218,9 +234,16 @@ async def flatten(
     ctx = _state(request)
     if ctx.orchestrator is None:
         raise HTTPException(status.HTTP_409_CONFLICT, "no orchestrator")
-    ctx.orchestrator._flatten(ctx.marks or {}, int(time.time() * 1000), f"manual:{principal.name}")
+    result = await asyncio.to_thread(
+        ctx.orchestrator.flatten, ctx.marks or {}, f"manual:{principal.name}"
+    )
     ctx.audit(principal.name, "flatten")
-    return {"ok": True}
+    if result.get("status") == "cycle_in_progress":
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "交易周期正在运行；已启用熔断但尚未平仓，在途订单仍可能成交，周期结束后请重新操作",
+        )
+    return {"ok": True, "status": "submitted", **result}
 
 
 @router.post("/control/cycle")
@@ -231,6 +254,9 @@ async def run_cycle(
     if ctx.orchestrator is None:
         raise HTTPException(status.HTTP_409_CONFLICT, "no orchestrator")
     report = await asyncio.to_thread(ctx.orchestrator.run_once)
+    if report.skipped != "cycle_in_progress":
+        ctx.last_cycle_ms = report.ts_ms
+        ctx.marks = dict(ctx.orchestrator.last_marks)
     ctx.audit(principal.name, "manual_cycle")
     return {
         "cycle_id": report.cycle_id,
@@ -253,6 +279,8 @@ async def run_backtest(
     ctx.audit(principal.name, "backtest", {"days": body.days, "source": body.source})
     return {
         "label": result.label,
+        "start_ms": result.start_ms,
+        "end_ms": result.end_ms,
         "metrics": result.metrics,
         "rejections": result.rejections,
         "decisions": result.decisions,
@@ -271,7 +299,9 @@ def _run_backtest(config: Config, body: BacktestBody):
             config, symbols=symbols, timeframe=config.data.timeframe, days=body.days, seed=body.seed
         )
     else:
-        series = load_parquet(config, symbols=symbols, timeframe=config.data.timeframe)
+        series = load_parquet(
+            config, symbols=symbols, timeframe=config.data.timeframe, days=body.days
+        )
     if not series:
         raise HTTPException(
             status.HTTP_409_CONFLICT, "no parquet data; seed it or use source=synthetic"
@@ -282,7 +312,7 @@ def _run_backtest(config: Config, body: BacktestBody):
         BacktestParams(
             initial_cash=body.initial_cash,
             timeframe=config.data.timeframe,
-            label=f"{body.source}-{body.days}d",
+            label=f"{'synthetic' if body.source == 'synthetic' else 'local-parquet'}-{body.days}d",
         ),
     )
 

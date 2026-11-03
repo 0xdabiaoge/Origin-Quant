@@ -5,10 +5,13 @@ import type { OrdersPayload } from "@/api/types";
 import { fmtMoney, fmtNum, fmtTime, pnlClass } from "@/api/format";
 import PageHeader from "@/components/PageHeader.vue";
 import EmptyState from "@/components/EmptyState.vue";
+import { RouterLink } from "vue-router";
+import { useAuthStore } from "@/stores/auth";
 
 const data = ref<OrdersPayload | null>(null);
 const err = ref("");
 const tab = ref<"open" | "fills">("open");
+const auth = useAuthStore();
 
 onMounted(async () => {
   try {
@@ -54,6 +57,8 @@ const statusTone: Record<string, string> = {
 
     <p v-if="err" class="mb-4 rounded-lg border border-danger-600/40 bg-danger-600/10 px-3 py-2 text-sm text-danger-500">{{ err }}</p>
 
+    <p v-if="auth.can('owner')" class="mb-4 text-xs text-mute-400">此处展示本地账本记录。<RouterLink class="text-accent-400 hover:underline" :to="{ name: 'admin-venue' }">查看交易所只读观察 →</RouterLink></p>
+
     <div v-if="tab === 'open'" class="card">
       <div v-if="open.length" class="overflow-x-auto">
         <table class="table-base">
@@ -75,7 +80,7 @@ const statusTone: Record<string, string> = {
           </tbody>
         </table>
       </div>
-      <EmptyState v-else title="没有未结订单" hint="所有订单都已成交或撤销。" />
+      <EmptyState v-else :title="data ? '本地没有未结订单记录' : '本地订单未获取'" :hint="data ? '交易所状态需单独核对。' : '请检查连接或稍后重试。'" />
     </div>
 
     <div v-else class="card">
@@ -97,7 +102,7 @@ const statusTone: Record<string, string> = {
           </tbody>
         </table>
       </div>
-      <EmptyState v-else title="没有成交记录" hint="策略还没有产生任何成交。" />
+      <EmptyState v-else :title="data ? '本地没有成交记录' : '本地成交未获取'" :hint="data ? '交易所状态需单独核对。' : '请检查连接或稍后重试。'" />
     </div>
   </div>
 </template>

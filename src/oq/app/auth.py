@@ -17,17 +17,21 @@ Roles are deliberately few.  This is a single-operator engine, not a SaaS:
 
 from __future__ import annotations
 
+import hashlib
 import hmac
 import os
 import secrets
 import sqlite3
+import threading
 import time
+from collections import deque
 from dataclasses import dataclass
 
 from fastapi import Cookie, Header, HTTPException, Request, status
 
 COOKIE_NAME = "oq_session"
 SESSION_TTL_S = 12 * 3600
+_EPHEMERAL_SIGNING_KEY = secrets.token_bytes(32)
 
 ROLE_OWNER = "owner"
 ROLE_TRADER = "trader"
@@ -38,11 +42,48 @@ ROLES = (ROLE_OWNER, ROLE_TRADER, ROLE_VIEWER)
 _RANK = {ROLE_VIEWER: 0, ROLE_TRADER: 1, ROLE_OWNER: 2}
 
 
+class LoginLimiter:
+    """Bound authentication attempts per connection peer, per application process.
+
+    Reverse proxies and multiple workers require their own shared rate limiting;
+    untrusted forwarded headers are never used to select the peer.
+    """
+
+    def __init__(self, limit: int = 10, window_s: float = 60) -> None:
+        self.limit = limit
+        self.window_s = window_s
+        self._lock = threading.Lock()
+        self._attempts: dict[str, deque[float]] = {}
+
+    def allow(self, peer: str) -> bool:
+        now = time.monotonic()
+        with self._lock:
+            for key in list(self._attempts):
+                queue = self._attempts[key]
+                while queue and now - queue[0] >= self.window_s:
+                    queue.popleft()
+                if not queue:
+                    del self._attempts[key]
+            if peer not in self._attempts and len(self._attempts) >= 4096:
+                return False
+            attempts = self._attempts.setdefault(peer, deque())
+            if len(attempts) >= self.limit:
+                return False
+            attempts.append(now)
+            return True
+
+    def reset(self, peer: str) -> None:
+        with self._lock:
+            self._attempts.pop(peer, None)
+
+
 @dataclass(frozen=True, slots=True)
 class Principal:
     name: str
     via: str
     role: str = ROLE_OWNER
+    session_kind: str = ""
+    session_stamp: str = ""
 
     def at_least(self, role: str) -> bool:
         return _RANK.get(self.role, 0) >= _RANK.get(role, 0)
@@ -53,7 +94,19 @@ def _configured_token() -> str:
 
 
 def _signing_key() -> bytes:
-    return os.getenv("OQ_SECRET_KEY", "origin-quant-dev-key").encode("utf-8")
+    configured = os.getenv("OQ_SECRET_KEY", "").strip()
+    return configured.encode("utf-8") if configured else _EPHEMERAL_SIGNING_KEY
+
+
+def session_stamp(user: dict[str, object] | None) -> str:
+    """Invalidate sessions when the account credentials or role change."""
+    if user is None:
+        material = (
+            os.getenv("OQ_ADMIN_PASSWORD_HASH", "") + "\0" + os.getenv("OQ_ADMIN_PASSWORD", "")
+        )
+    else:
+        material = f"{user['id']}\0{user['role']}\0{user['password_hash']}"
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 
 # -- password hashing -------------------------------------------------------
@@ -85,11 +138,13 @@ def bootstrap_password_hash() -> str:
 
 
 # -- sessions ---------------------------------------------------------------
-def issue_session(user: str = "operator", role: str = ROLE_OWNER) -> str:
+def issue_session(
+    user: str = "operator", role: str = ROLE_OWNER, *, kind: str = "", stamp: str = ""
+) -> str:
     from itsdangerous import URLSafeTimedSerializer
 
     return URLSafeTimedSerializer(_signing_key(), salt="oq-session").dumps(
-        {"u": user, "r": role, "n": secrets.token_hex(4)}
+        {"u": user, "r": role, "n": secrets.token_hex(4), "k": kind, "s": stamp}
     )
 
 
@@ -106,7 +161,32 @@ def read_session(token: str) -> Principal | None:
         name=str(payload.get("u", "operator")),
         via="cookie",
         role=str(payload.get("r", ROLE_OWNER)),
+        session_kind=str(payload.get("k", "")),
+        session_stamp=str(payload.get("s", "")),
     )
+
+
+def validated_session(request: Request, token: str) -> Principal | None:
+    principal = read_session(token)
+    if principal is None or not principal.session_stamp:
+        return None
+    with request.app.state.oq.db.read() as conn:
+        user = get_user(conn, principal.name)
+    if principal.session_kind == "user":
+        if user is None or principal.role != user["role"]:
+            return None
+        expected = session_stamp(user)
+    elif principal.session_kind == "bootstrap":
+        if (
+            principal.name != "operator"
+            or user is not None
+            or not (os.getenv("OQ_ADMIN_PASSWORD_HASH", "") or os.getenv("OQ_ADMIN_PASSWORD", ""))
+        ):
+            return None
+        expected = session_stamp(None)
+    else:
+        return None
+    return principal if hmac.compare_digest(principal.session_stamp, expected) else None
 
 
 # -- user store -------------------------------------------------------------
@@ -198,10 +278,10 @@ async def require_auth(
             return Principal(name="token", via="bearer", role=ROLE_OWNER)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "bad token")
     if oq_session:
-        principal = read_session(oq_session)
+        principal = validated_session(request, oq_session)
         if principal:
             return principal
-    if not token and _is_loopback(request):
+    if not token and os.getenv("OQ_ALLOW_LOOPBACK_AUTH") == "1" and _is_loopback(request):
         return Principal(name="loopback", via="loopback", role=ROLE_OWNER)
     raise HTTPException(status.HTTP_401_UNAUTHORIZED, "authentication required")
 
@@ -210,7 +290,7 @@ def _local_writes_blocked(principal: Principal) -> bool:
     return (
         principal.via == "loopback"
         and not _configured_token()
-        and os.getenv("OQ_ALLOW_LOCAL_WRITES", "1") != "1"
+        and os.getenv("OQ_ALLOW_LOCAL_WRITES", "0") != "1"
     )
 
 

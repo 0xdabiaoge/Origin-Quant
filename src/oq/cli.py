@@ -99,9 +99,23 @@ def cmd_config(args: argparse.Namespace, config: Config) -> int:
 
 
 def cmd_seed(args: argparse.Namespace, config: Config) -> int:
-    db, _store = _open(config)
     parquet = ParquetStore(config.data.parquet_dir)
     symbols = trading_symbols(config)
+    if args.source == "synthetic":
+        existing = [
+            s
+            for s in symbols
+            if parquet.bars_path(s, config.data.timeframe).exists()
+            or parquet.funding_path(s).exists()
+        ]
+        if existing:
+            print(
+                "refusing synthetic seed: existing market data would be overwritten; "
+                "use an isolated data directory",
+                file=sys.stderr,
+            )
+            return 2
+    db, _store = _open(config)
     if args.source == "synthetic":
         rest = None
         ingestor = Ingestor(config, parquet, rest)
@@ -110,7 +124,7 @@ def cmd_seed(args: argparse.Namespace, config: Config) -> int:
             symbols=symbols,
             timeframe=config.data.timeframe,
             seed=args.seed,
-            force=True,
+            force=False,
         )
         reports = list(seeded.values())
     else:
@@ -141,7 +155,9 @@ def cmd_backtest(args: argparse.Namespace, config: Config) -> int:
             config, symbols=symbols, timeframe=config.data.timeframe, days=args.days, seed=args.seed
         )
     else:
-        series = load_parquet(config, symbols=symbols, timeframe=config.data.timeframe)
+        series = load_parquet(
+            config, symbols=symbols, timeframe=config.data.timeframe, days=args.days
+        )
     if not series:
         print(
             "no data; run `oq seed --source synthetic` or `oq seed --source okx` first",
@@ -155,7 +171,8 @@ def cmd_backtest(args: argparse.Namespace, config: Config) -> int:
         BacktestParams(
             initial_cash=D(str(args.cash)),
             timeframe=config.data.timeframe,
-            label=args.label or f"{args.source}-{args.days}d",
+            label=args.label
+            or f"{'synthetic' if args.source == 'synthetic' else 'local-parquet'}-{args.days}d",
         ),
     )
     print(format_report(result))
@@ -195,7 +212,7 @@ def cmd_serve(args: argparse.Namespace, config: Config) -> int:
 
     from oq.app.main import build_app
 
-    app = build_app(config, start_scheduler=args.scheduler)
+    app = build_app(config, start_scheduler=True if args.scheduler else None)
     uvicorn.run(
         app,
         host=args.host,

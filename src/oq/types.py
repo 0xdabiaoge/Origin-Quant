@@ -23,6 +23,7 @@ from typing import Any, NewType
 ZERO = Decimal(0)
 ONE = Decimal(1)
 HUNDRED = Decimal(100)
+DEFAULT_TP1_R = Decimal("1.5")
 
 Symbol = NewType("Symbol", str)
 Ms = NewType("Ms", int)

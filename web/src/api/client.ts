@@ -11,25 +11,12 @@ export class ApiError extends Error {
 }
 
 let onUnauthorized: (() => void) | null = null;
-// Probing the session on boot is expected to 401 for a logged-out visitor.
-// Suppressing the redirect for that one call keeps the public pages public.
-let suppressUnauthorized = false;
 
 export function setUnauthorizedHandler(fn: () => void): void {
   onUnauthorized = fn;
 }
 
-/** Run `fn` without letting a 401 trigger the global redirect. */
-export async function withoutUnauthorizedRedirect<T>(fn: () => Promise<T>): Promise<T> {
-  suppressUnauthorized = true;
-  try {
-    return await fn();
-  } finally {
-    suppressUnauthorized = false;
-  }
-}
-
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+async function request<T>(path: string, init: RequestInit = {}, redirectOnUnauthorized = true): Promise<T> {
   const res = await fetch(path, {
     credentials: "same-origin",
     headers: {
@@ -39,8 +26,8 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     ...init,
   });
 
-  if (res.status === 401) {
-    if (!suppressUnauthorized) onUnauthorized?.();
+  if (res.status === 401 && redirectOnUnauthorized) {
+    onUnauthorized?.();
     throw new ApiError(401, "登录已失效，请重新登录");
   }
 
@@ -55,10 +42,12 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
 
   if (!res.ok) {
-    const detail =
-      body && typeof body === "object" && "detail" in body
-        ? String((body as { detail: unknown }).detail)
-        : `HTTP ${res.status}`;
+    const raw = body && typeof body === "object" && "detail" in body
+      ? (body as { detail: unknown }).detail : null;
+    const detail = Array.isArray(raw)
+      ? raw.map((item: unknown) => item && typeof item === "object" && "msg" in item
+        ? String((item as { msg: unknown }).msg) : "输入不符合要求").join("；")
+      : typeof raw === "string" ? raw : `HTTP ${res.status}`;
     throw new ApiError(res.status, detail);
   }
   return body as T;
@@ -85,11 +74,22 @@ export const v1 = {
   equity: (limit = 600) =>
     api.get<{ items: import("./types").EquityPoint[] }>(`/api/v1/app/equity?limit=${limit}`),
   data: () => api.get<import("./types").DataPayload>("/api/v1/app/data"),
-  me: () => api.get<import("./types").Me>("/api/v1/auth/me"),
+  me: () => request<import("./types").Me>("/api/v1/auth/me", {}, false),
   login: (username: string, password: string) =>
-    api.post<{ ok: boolean; username: string; role: string }>("/api/auth/login", { username, password }),
+    request<{ ok: boolean; username: string; role: string }>(
+      "/api/auth/login", { method: "POST", body: JSON.stringify({ username, password }) }, false,
+    ),
   logout: () => api.post<{ ok: boolean }>("/api/auth/logout"),
   adminOverview: () => api.get<import("./types").AdminOverview>("/api/v1/admin/overview"),
+  aiConfig: () => api.get<import("./types").AiConfig>("/api/v1/admin/ai/config"),
+  saveAiConfig: (body: Omit<import("./types").AiConfig, "has_key">) =>
+    api.put<import("./types").AiConfig>("/api/v1/admin/ai/config", body),
+  aiHistory: () => api.get<{ items: import("./types").AiDecision[] }>("/api/v1/admin/ai/history"),
+  testAi: () => api.post<{ ok: boolean; provider: string; model: string }>("/api/v1/admin/ai/test"),
+  aiAnalyze: (symbol: string) => api.post<import("./types").AiDecision>("/api/v1/admin/ai/analyze", { symbol }),
+  news: () => api.get<{ items: import("./types").NewsItem[]; fetched_ms: number | null; errors: Record<string, string> }>("/api/v1/admin/news"),
+  refreshNews: () => api.post<unknown>("/api/v1/admin/news/refresh"),
+  venueReadback: () => api.post<import("./types").VenueReadback>("/api/v1/admin/venue/readback"),
   users: () => api.get<{ items: import("./types").UserRow[]; roles: string[] }>("/api/v1/admin/users"),
   createUser: (body: { username: string; password: string; role: string }) =>
     api.post<{ ok: boolean }>("/api/v1/admin/users", body),
@@ -112,7 +112,7 @@ export const v1 = {
       "/api/v1/admin/backups",
     ),
   danger: (action: string, confirm: string) =>
-    api.post<{ ok: boolean; action: string }>(`/api/v1/admin/danger/${action}`, { confirm }),
+    api.post<{ ok: boolean; action: string; venue_flat_confirmed?: boolean; outcomes?: { symbol: string; book: string; status: string; errors: string[]; remaining_local_qty?: string }[] }>(`/api/v1/admin/danger/${action}`, { confirm }),
   cycle: () => api.post<Record<string, unknown>>("/api/control/cycle"),
   backtest: (body: { days: number; source: string; cash?: string }) =>
     api.post<import("./types").BacktestResult>("/api/backtest", body),

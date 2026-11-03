@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import httpx
 import pytest
 
-from oq.data.okx_rest import OkxRest
+from oq.data.okx_rest import OkxError, OkxRest
 from oq.domain.order import Order
 from oq.execution.broker import BrokerContext
 from oq.execution.okx_adapter import LiveTradingDisabled, OkxAdapter, _live_allowed
@@ -63,6 +64,64 @@ def test_place_refuses_to_touch_the_venue_when_live_is_off(config):
 def test_the_default_config_ships_with_live_disabled(config):
     assert config.app.live_trading is False
     assert config.app.mode in {"paper", "backtest"}
+
+
+def test_missing_bid_ask_are_not_substituted_with_last_trade(config, monkeypatch):
+    rest = OkxRest(config.venues["okx"])
+    monkeypatch.setattr(rest, "_request", lambda *args, **kwargs: [{"ts": "100", "last": "10"}])
+    quote = rest.ticker("BTC-USDT-SWAP")
+    assert quote.bid == D("0")
+    assert quote.ask == D("0")
+    assert quote.last == D("10")
+
+
+@pytest.mark.parametrize("outcome", ["timeout", "server_error"])
+def test_private_mutation_is_never_retried_when_outcome_is_uncertain(config, outcome):
+    attempts = []
+
+    def handler(request):
+        attempts.append(request)
+        if outcome == "timeout":
+            raise httpx.ReadTimeout("response lost", request=request)
+        return httpx.Response(503, request=request)
+
+    rest = OkxRest(
+        config.venues["okx"].model_copy(update={"max_retries": 2}),
+        api_key="test",
+        secret="test",
+        passphrase="test",
+        transport=httpx.MockTransport(handler),
+    )
+    try:
+        with pytest.raises((httpx.ReadTimeout, OkxError)):
+            rest.place_order({"clOrdId": "oqtest", "instId": "BTC-USDT-SWAP"})
+        assert len(attempts) == 1
+    finally:
+        rest.close()
+
+
+def test_private_read_can_retry_transient_failure(config, monkeypatch):
+    attempts = []
+
+    def handler(request):
+        attempts.append(request)
+        if len(attempts) == 1:
+            return httpx.Response(503, request=request)
+        return httpx.Response(200, json={"code": "0", "data": [{"ok": True}]}, request=request)
+
+    rest = OkxRest(
+        config.venues["okx"].model_copy(update={"max_retries": 2}),
+        api_key="test",
+        secret="test",
+        passphrase="test",
+        transport=httpx.MockTransport(handler),
+    )
+    monkeypatch.setattr(rest, "_backoff", lambda _: None)
+    try:
+        assert rest._request("GET", "/api/v5/account/balance", private=True) == [{"ok": True}]
+        assert len(attempts) == 2
+    finally:
+        rest.close()
 
 
 def test_order_body_is_reduce_only_for_closes(config):

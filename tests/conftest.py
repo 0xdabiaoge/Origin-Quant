@@ -16,6 +16,13 @@ from oq.storage import Database, Store
 from oq.types import D
 
 
+@pytest.fixture(autouse=True)
+def local_test_auth(monkeypatch):
+    """Existing local integration tests explicitly opt in to loopback access."""
+    monkeypatch.setenv("OQ_ALLOW_LOOPBACK_AUTH", "1")
+    monkeypatch.setenv("OQ_ALLOW_LOCAL_WRITES", "1")
+
+
 @pytest.fixture(scope="session")
 def project_root():
     from pathlib import Path

@@ -7,12 +7,14 @@ user/config management needs ``owner``.
 
 from __future__ import annotations
 
+import asyncio
 import shutil
 import sqlite3
 import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
@@ -44,6 +46,21 @@ def _conn(request: Request) -> sqlite3.Connection:
     return _state(request).db.connect()
 
 
+def _marks_complete(ctx: Any, portfolio: Any, marks: dict) -> bool:
+    """Do not present entry-price fallbacks or old marks as current equity."""
+    from oq.clock import tf_to_ms
+
+    positions = portfolio.positions_of()
+    if not positions:
+        return True
+    last_cycle = int(getattr(ctx, "last_cycle_ms", 0) or 0)
+    now = int(time.time() * 1000)
+    step = tf_to_ms(ctx.config.data.timeframe)
+    if not last_cycle or last_cycle > now or last_cycle // step != now // step:
+        return False
+    return all(pos.symbol in marks and marks[pos.symbol] > 0 for pos in positions)
+
+
 # -- public -----------------------------------------------------------------
 @router.get("/public/brand")
 async def brand(request: Request) -> dict[str, Any]:
@@ -65,21 +82,13 @@ async def public_metrics(request: Request) -> dict[str, Any]:
     only unauthenticated data surface, so it must not leak the book.
     """
     ctx = _state(request)
-    conn = _conn(request)
-    try:
-        stats = admin_data.trade_stats(conn)
-        series = admin_data.equity_series(conn, limit=180)
-    finally:
-        conn.close()
     return {
         "mode": ctx.config.app.mode,
         "version": app_version(),
         "uptime_s": round(time.time() - ctx.started_at, 1),
         "last_cycle_ms": ctx.last_cycle_ms,
-        "stats": stats,
-        "equity": [
-            {"ts_ms": r["ts_ms"], "equity": r["equity"], "drawdown": r["drawdown"]} for r in series
-        ],
+        "stats": None,
+        "equity": [],
     }
 
 
@@ -91,11 +100,13 @@ async def auth_me(request: Request) -> dict[str, Any]:
     every page load, and a 401 here would print a console error for every
     logged-out visit while telling us nothing new.
     """
-    from oq.app.auth import COOKIE_NAME, _configured_token, _is_loopback, read_session
+    import os
+
+    from oq.app.auth import COOKIE_NAME, _configured_token, _is_loopback, validated_session
 
     cookie = request.cookies.get(COOKIE_NAME)
     if cookie:
-        principal = read_session(cookie)
+        principal = validated_session(request, cookie)
         if principal is not None:
             return {
                 "authenticated": True,
@@ -104,7 +115,7 @@ async def auth_me(request: Request) -> dict[str, Any]:
                 "via": principal.via,
             }
     token = _configured_token()
-    if not token and _is_loopback(request):
+    if not token and os.getenv("OQ_ALLOW_LOOPBACK_AUTH") == "1" and _is_loopback(request):
         return {
             "authenticated": True,
             "username": "loopback",
@@ -136,7 +147,8 @@ async def app_overview(
     positions: list[dict[str, Any]] = []
     equity = cash = None
     if portfolio is not None:
-        equity = str(portfolio.equity(marks))
+        if _marks_complete(ctx, portfolio, marks):
+            equity = str(portfolio.equity(marks))
         cash = str(portfolio.cash)
         for pos in portfolio.positions_of():
             positions.append(
@@ -175,9 +187,10 @@ async def app_positions(
     if orch is None:
         return {"positions": [], "equity": None, "cash": None}
     marks = getattr(ctx, "marks", {}) or {}
+    complete = _marks_complete(ctx, orch.portfolio, marks)
     out = []
     for pos in orch.portfolio.positions_of():
-        mark = marks.get(pos.symbol)
+        mark = marks.get(pos.symbol) if complete else None
         out.append(
             {
                 "symbol": pos.symbol,
@@ -199,10 +212,10 @@ async def app_positions(
         )
     return {
         "positions": out,
-        "equity": str(orch.portfolio.equity(marks)),
+        "equity": str(orch.portfolio.equity(marks)) if complete else None,
         "cash": str(orch.portfolio.cash),
-        "heat": str(orch.portfolio.heat(marks)),
-        "open_risk": str(orch.portfolio.open_risk(marks)),
+        "heat": str(orch.portfolio.heat(marks)) if complete else None,
+        "open_risk": str(orch.portfolio.open_risk(marks)) if complete else None,
     }
 
 
@@ -281,7 +294,13 @@ async def app_data(
     rows = []
     for symbol in ctx.config.instrument_map():
         try:
-            last = store.last_bar_ms(symbol, timeframe)
+            frame = store.read_bars(symbol, timeframe)
+            if "confirmed" not in frame.columns or "ts_ms" not in frame.columns:
+                raise ValueError("confirmed candles unavailable")
+            frame = frame.loc[
+                frame["confirmed"].eq(True) & (frame["ts_ms"] <= (now // step) * step - step)
+            ]
+            last = int(frame["ts_ms"].iloc[-1]) if not frame.empty else None
         except Exception:
             last = None
         if last is None:
@@ -435,7 +454,7 @@ async def admin_config(
         "paths": {
             "db": str(ctx.config.app.db_path),
             "parquet": str(ctx.config.data.parquet_dir),
-            "config_dir": str(ctx.config.root),
+            "config_dir": str(ctx.config.config_dir or (Path(ctx.config.root) / "config")),
         },
     }
 
@@ -516,6 +535,59 @@ async def admin_backups(
     return {"items": items, "disk_free": shutil.disk_usage(backups).free}
 
 
+@router.post("/admin/backups/full")
+def admin_full_backup(
+    request: Request, principal: Principal = Depends(require_owner)
+) -> dict[str, Any]:
+    """Archive a SQLite snapshot, market data and YAML; excludes credentials."""
+    from oq.storage.backup import create_archive
+
+    ctx = _state(request)
+    result = create_archive(ctx.db, ctx.config)
+    ctx.audit(principal.name, "backup.full", {"file": result["file"]})
+    return {"ok": True, **result}
+
+
+@router.get("/admin/backups/full")
+def admin_full_backups(
+    request: Request, principal: Principal = Depends(require_owner)
+) -> dict[str, Any]:
+    backups = Path(_state(request).config.root) / "backups"
+    if not backups.exists():
+        return {"items": []}
+    return {
+        "items": [
+            {"file": p.name, "bytes": p.stat().st_size, "created_ms": int(p.stat().st_mtime * 1000)}
+            for p in sorted(
+                backups.glob("origin-full-*.zip"), key=lambda p: p.stat().st_mtime, reverse=True
+            )
+            if p.is_file() and not p.is_symlink()
+        ]
+    }
+
+
+@router.post("/admin/backups/full/{filename}/verify")
+def admin_verify_full_backup(
+    request: Request, filename: str, principal: Principal = Depends(require_owner)
+) -> dict[str, Any]:
+    from oq.storage.backup import verify_archive
+
+    if not filename.startswith("origin-full-") or not filename.endswith(".zip"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid backup name")
+    root = Path(_state(request).config.root) / "backups"
+    path = root / filename
+    if path.name != filename or path.is_symlink() or not path.is_file():
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "backup not found")
+    try:
+        result = verify_archive(path)
+    except (OSError, ValueError, KeyError, sqlite3.Error) as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, "backup verification failed"
+        ) from exc
+    _state(request).audit(principal.name, "backup.verify", {"file": filename})
+    return result
+
+
 class DangerBody(BaseModel):
     confirm: str = Field(description="Type the action name to confirm")
 
@@ -540,20 +612,92 @@ async def admin_danger(
     orch = ctx.orchestrator
     if orch is None:
         raise HTTPException(status.HTTP_409_CONFLICT, "no orchestrator")
+    details: dict[str, Any] = {}
     if action == "kill":
         orch.engage_kill_switch(f"admin console by {principal.name}")
     elif action == "pause":
         orch.halt(f"admin console by {principal.name}")
     elif action == "resume":
         orch.resume()
+    elif action == "reset_kill":
+        if not principal.at_least("owner"):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "owner role required")
+        orch.reset_kill_switch()
     elif action == "flatten":
         marks = getattr(ctx, "marks", {}) or {}
-        orch.flatten(marks, f"admin console by {principal.name}")
+        details = await asyncio.to_thread(orch.flatten, marks, f"admin console by {principal.name}")
     else:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"unknown action {action}")
     with ctx.db.tx() as conn:
         admin_data.record_audit(conn, principal.name, f"danger.{action}", None)
-    return {"ok": True, "action": action}
+    if details.get("status") == "cycle_in_progress":
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "交易周期正在运行；已启用熔断但尚未平仓，在途订单仍可能成交，周期结束后请重新操作",
+        )
+    return {"ok": True, "action": action, **details}
+
+
+@router.post("/admin/venue/readback")
+def admin_venue_readback(
+    request: Request, principal: Principal = Depends(require_owner)
+) -> dict[str, Any]:
+    """Explicit read-only OKX observations; no order, position or ledger mutation."""
+    from oq.execution.okx_adapter import OkxAdapter
+    from oq.execution.venue_readback import readback
+
+    ctx = _state(request)
+    orchestrator = ctx.orchestrator
+    if ctx.config.app.mode != "live" or orchestrator is None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "venue readback requires a live-mode adapter")
+    broker = orchestrator.broker
+    if not isinstance(broker, OkxAdapter) or not broker.rest.has_credentials:
+        raise HTTPException(status.HTTP_409_CONFLICT, "venue credentials are not configured")
+    result = readback(ctx.store, broker.rest, ctx.config.instrument_map())
+    result["venue_environment"] = "demo" if broker.rest.demo else "live"
+    ctx.audit(principal.name, "venue.readback", {"orders": len(result["orders"])})
+    return result
+
+
+class VenueOrderReviewBody(BaseModel):
+    client_id: str = Field(min_length=1, max_length=32, pattern="^[A-Za-z0-9]+$")
+    review_id: UUID
+
+
+@router.post("/admin/venue/order-review")
+def admin_venue_order_review(
+    request: Request,
+    body: VenueOrderReviewBody,
+    principal: Principal = Depends(require_owner),
+) -> dict[str, Any]:
+    """Record an idempotent venue observation; never resolve or unlock orders."""
+    from oq.execution.okx_adapter import OkxAdapter
+    from oq.execution.venue_readback import (
+        ReviewConflict,
+        ReviewOrderNotFound,
+        record_order_review,
+    )
+
+    ctx = _state(request)
+    orchestrator = ctx.orchestrator
+    if ctx.config.app.mode != "live" or orchestrator is None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "venue review requires a live-mode adapter")
+    broker = orchestrator.broker
+    if not isinstance(broker, OkxAdapter) or not broker.rest.has_credentials:
+        raise HTTPException(status.HTTP_409_CONFLICT, "venue credentials are not configured")
+    try:
+        return record_order_review(
+            ctx.store,
+            broker.rest,
+            ctx.config.instrument_map(),
+            actor=principal.name,
+            client_id=body.client_id,
+            review_id=str(body.review_id),
+        )
+    except ReviewOrderNotFound as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "unresolved order not found") from exc
+    except ReviewConflict as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
 
 
 __all__ = ["router"]

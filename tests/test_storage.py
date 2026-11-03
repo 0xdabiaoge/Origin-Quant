@@ -9,11 +9,11 @@ from oq.types import Book, D, InstType, OrderStatus, Side
 
 
 def test_schema_migrates_once_and_is_idempotent(db: Database):
-    assert db.migrate() == 1
-    assert db.migrate() == 1
+    assert db.migrate() == 2
+    assert db.migrate() == 2
     report = db.verify()
     assert report["ok"] is True
-    assert report["schema_version"] == 1
+    assert report["schema_version"] == 2
 
 
 def test_event_and_projection_commit_together(db: Database, store: Store):
@@ -64,6 +64,56 @@ def test_position_sync_and_load(db: Database, store: Store, portfolio):
     assert loaded[0].stop_px == D("59000")
     restored = store.load_portfolio()
     assert restored.cash == portfolio.cash
+
+
+def test_initial_stop_and_targets_survive_stop_move_and_reload(
+    db: Database, store: Store, portfolio
+):
+    portfolio.apply_fill(
+        symbol="BTC-USDT-SWAP",
+        book=Book.DIRECTIONAL,
+        inst_type=InstType.SWAP,
+        side=Side.BUY,
+        qty=D("0.01"),
+        px=D("60000"),
+        fee=D("0"),
+        ts_ms=1,
+        stop_px=D("59000"),
+        tp1_r=D("1.8"),
+        tp2_r=D("3.5"),
+    )
+    portfolio.get("BTC-USDT-SWAP", Book.DIRECTIONAL).move_stop(D("60100"))
+    with db.tx() as conn:
+        store.sync_positions(conn, portfolio)
+    restored = store.load_positions()[0]
+    assert restored.stop_px == D("60100")
+    assert restored.initial_stop_px == D("59000")
+    assert restored.tp1_r == D("1.8") and restored.tp2_r == D("3.5")
+
+
+def test_schema_v1_positions_migrate_without_guessing_initial_stop(tmp_path):
+    import sqlite3
+    from pathlib import Path
+
+    schema = Path(__file__).resolve().parents[1] / "src/oq/storage/schema.sql"
+    legacy = schema.read_text(encoding="utf-8")
+    legacy = legacy.replace("    initial_stop_px TEXT,\n", "")
+    legacy = legacy.replace("    tp1_r           TEXT NOT NULL DEFAULT '1.5',\n", "")
+    legacy = legacy.replace("    tp2_r           TEXT NOT NULL DEFAULT '3.0',\n", "")
+    path = tmp_path / "legacy.db"
+    with sqlite3.connect(path) as conn:
+        conn.executescript(legacy)
+        conn.execute("INSERT INTO schema_version(version, applied_ms) VALUES (1, 0)")
+        conn.execute(
+            "INSERT INTO positions(symbol, book, inst_type, qty, avg_px, stop_px, leverage, opened_ms, updated_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ("BTC-USDT-SWAP", "directional", "SWAP", "1", "60000", "60100", "1", 1, 2),
+        )
+    database = Database(path)
+    assert database.migrate() == 2
+    assert database.migrate() == 2
+    restored = Store(database).load_positions()[0]
+    assert restored.stop_px == D("60100")
+    assert restored.initial_stop_px is None
 
 
 def test_equity_series_is_ordered(db: Database, store: Store):

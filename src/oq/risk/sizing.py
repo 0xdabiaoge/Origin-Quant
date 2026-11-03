@@ -49,13 +49,13 @@ def build_legs(
     if intent.action is Action.MOVE_STOP:
         return result
 
+    if intent.action in {Action.CLOSE, Action.REDUCE}:
+        return _exit_legs(intent, ctx, config, instruments, result)
+
     equity = ctx.equity
     if equity <= ZERO:
         result.failure = "equity_non_positive"
         return result
-
-    if intent.action in {Action.CLOSE, Action.REDUCE}:
-        return _exit_legs(intent, ctx, config, instruments, result)
 
     if intent.sizing == "notional":
         return _notional_legs(intent, ctx, config, instruments, result)

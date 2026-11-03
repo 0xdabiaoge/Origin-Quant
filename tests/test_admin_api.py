@@ -18,9 +18,10 @@ from oq.app.main import build_app
 def client(config, tmp_path, monkeypatch):
     cfg = config.model_copy(
         update={
+            "root": tmp_path,
             "app": config.app.model_copy(
                 update={"db_path": tmp_path / "v1.db", "mode": "paper", "live_trading": False}
-            )
+            ),
         }
     )
     monkeypatch.setenv("OQ_API_TOKEN", "")

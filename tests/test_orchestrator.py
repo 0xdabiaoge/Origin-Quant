@@ -97,14 +97,13 @@ def test_a_missing_bar_is_stale_once_the_grace_has_passed(orchestrator):
     assert "BTC-USDT-SWAP" in stale
 
 
-def test_a_late_bar_gets_a_short_publication_grace(orchestrator):
-    """A bar may arrive seconds after its boundary; do not panic instantly."""
+def test_missing_closed_bar_blocks_new_decisions_during_publication_grace(orchestrator):
+    """The old bar is stale even if the venue may still publish the new one."""
     cfg = orchestrator.config
     timeframe = cfg.data.timeframe
     step = tf_to_ms(timeframe)
     boundary = 1_800_000_000_000
-    # 10 seconds after the boundary the previous bar is missing, but the venue
-    # has not had time to publish it yet.
+    # Ten seconds after the boundary the previous bar has not arrived yet.
     now = boundary + 10_000
     _write_bars(
         ParquetStore(cfg.data.parquet_dir),
@@ -116,14 +115,88 @@ def test_a_late_bar_gets_a_short_publication_grace(orchestrator):
 
     views, _, stale = orchestrator._build_views(now)
 
-    assert "BTC-USDT-SWAP" in views
-    assert "BTC-USDT-SWAP" not in stale
+    assert "BTC-USDT-SWAP" not in views
+    assert "BTC-USDT-SWAP" in stale
 
 
 def test_missing_symbols_are_stale_not_assumed_flat(orchestrator):
     views, _, stale = orchestrator._build_views(int(time.time() * 1000))
     assert views == {}
     assert stale  # "cannot read" must never be treated as "no position"
+
+
+def test_views_exclude_unconfirmed_current_and_future_bars(orchestrator):
+    cfg = orchestrator.config
+    timeframe = cfg.data.timeframe
+    step = tf_to_ms(timeframe)
+    now = 1_800_000_000_000 + 600_000
+    boundary = _boundary(now, timeframe)
+    symbol = "BTC-USDT-SWAP"
+    store = ParquetStore(cfg.data.parquet_dir)
+    _write_bars(store, symbol, timeframe, boundary - step, 3)
+    store.write_bars(
+        symbol,
+        timeframe,
+        [
+            Bar(
+                symbol,
+                timeframe,
+                boundary,
+                D("10"),
+                D("10"),
+                D("10"),
+                D("10"),
+                D("1"),
+                confirmed=False,
+            ),
+            Bar(
+                symbol,
+                timeframe,
+                boundary + step,
+                D("20"),
+                D("20"),
+                D("20"),
+                D("20"),
+                D("1"),
+                confirmed=True,
+            ),
+        ],
+    )
+    views, _, stale = orchestrator._build_views(now)
+    assert symbol not in stale
+    assert views[symbol].ts_ms == boundary - step
+    assert float(views[symbol].close[-1]) != 10 and float(views[symbol].close[-1]) != 20
+
+
+def test_unconfirmed_last_closed_bar_is_stale_after_grace(orchestrator):
+    cfg = orchestrator.config
+    timeframe = cfg.data.timeframe
+    step = tf_to_ms(timeframe)
+    now = 1_800_000_000_000 + 600_000
+    boundary = _boundary(now, timeframe)
+    symbol = "BTC-USDT-SWAP"
+    store = ParquetStore(cfg.data.parquet_dir)
+    _write_bars(store, symbol, timeframe, boundary - 2 * step, 3)
+    store.write_bars(
+        symbol,
+        timeframe,
+        [
+            Bar(
+                symbol,
+                timeframe,
+                boundary - step,
+                D("10"),
+                D("10"),
+                D("10"),
+                D("10"),
+                D("1"),
+                confirmed=False,
+            ),
+        ],
+    )
+    views, _, stale = orchestrator._build_views(now)
+    assert symbol not in views
+    assert symbol in stale
 
 
 def test_funding_is_persisted_with_its_marker(orchestrator):

@@ -49,6 +49,8 @@ class AppContext:
     started_at: float = field(default_factory=time.time)
     version: str = field(default_factory=app_version)
     scheduler: Scheduler | None = None
+    news_worker: Any = None
+    notification_worker: Any = None
 
     def audit(self, actor: str, action: str, detail: Any = None) -> None:
         try:
@@ -104,7 +106,7 @@ class Scheduler:
         refresher.sync()
         report = orch.run_once()
         ctx.last_cycle_ms = report.ts_ms
-        ctx.marks = {p.symbol: p.avg_px for p in orch.portfolio.positions_of()} | ctx.marks
+        ctx.marks = dict(getattr(orch, "last_marks", {}))
         log.info(
             "cycle %s intents=%d approved=%d fills=%d skipped=%s errors=%s",
             report.cycle_id,
@@ -139,6 +141,12 @@ class _Refresher:
                     ingestor.sync_bars(symbol, ctx.config.data.timeframe, days=3)
                 except Exception:
                     log.warning("bar sync failed for %s", symbol)
+                if symbol.endswith("-SWAP"):
+                    try:
+                        ingestor.sync_funding(symbol, days=3)
+                    except Exception:
+                        log.warning("funding sync failed for %s", symbol)
+            rest.close()
         except Exception:
             log.exception("data refresh failed; cycle will see stale bars and refuse to trade")
 
@@ -161,9 +169,18 @@ def build_app(config: Config | None = None, *, start_scheduler: bool | None = No
         docs_url="/api/docs",
         openapi_url="/api/openapi.json",
     )
+    from oq.app.auth import LoginLimiter
+
+    app.state.login_limiter = LoginLimiter()
     app.state.oq = ctx
     app.include_router(router, prefix="/api")
     app.include_router(v1_router, prefix="/api/v1")
+    from oq.app.ai_api import router as ai_router
+
+    app.include_router(ai_router, prefix="/api/v1")
+    from oq.app.notifications_api import router as notifications_router
+
+    app.include_router(notifications_router, prefix="/api/v1")
     # Login/logout/me are also exposed under v1 so the console has one base path.
     app.include_router(router, prefix="/api/v1", include_in_schema=False)
 
@@ -190,9 +207,17 @@ def build_app(config: Config | None = None, *, start_scheduler: bool | None = No
         API paths are excluded so a typo in a fetch still fails loudly instead
         of silently returning HTML.
         """
-        if full_path.startswith(("api/", "assets/")):
+        if (
+            full_path.startswith(("api/", "assets/"))
+            or "\\" in full_path
+            or any(part in {".", ".."} for part in full_path.split("/"))
+            or Path(full_path).is_absolute()
+        ):
             return JSONResponse({"error": "not found"}, status_code=404)
-        candidate = WEB_DIR / full_path
+        root = WEB_DIR.resolve()
+        candidate = (root / full_path).resolve()
+        if not candidate.is_relative_to(root):
+            return JSONResponse({"error": "not found"}, status_code=404)
         if full_path and candidate.is_file():
             return FileResponse(candidate)
         page = _spa_index()
@@ -211,6 +236,13 @@ def build_app(config: Config | None = None, *, start_scheduler: bool | None = No
 
     @app.on_event("startup")
     async def _startup() -> None:
+        from oq.app.ai_api import NewsWorker
+        from oq.app.notifications_api import NotificationWorker
+
+        ctx.news_worker = NewsWorker(ctx)
+        ctx.news_worker.start()
+        ctx.notification_worker = NotificationWorker(ctx)
+        ctx.notification_worker.start()
         should_start = (
             start_scheduler
             if start_scheduler is not None
@@ -225,6 +257,10 @@ def build_app(config: Config | None = None, *, start_scheduler: bool | None = No
     async def _shutdown() -> None:
         if ctx.scheduler:
             ctx.scheduler.stop()
+        if ctx.news_worker:
+            ctx.news_worker.stop()
+        if ctx.notification_worker:
+            ctx.notification_worker.stop()
         db.close()
 
     return app
@@ -244,11 +280,18 @@ def _build_orchestrator(config: Config, db: Database, store: Store) -> Any:
 
     if config.app.mode == "live":
         from oq.execution.okx_adapter import OkxAdapter
+        from oq.storage.identity import bind_ledger
 
         assert rest is not None  # guarded above
         adapter = OkxAdapter(config, rest)
-        broker = adapter if adapter.allow_live else InstantQuoteBroker()
+        if not adapter.allow_live:
+            raise RuntimeError("live mode requires config.live_trading=true and OQ_LIVE=1")
+        bind_ledger(db, store, config.app.mode, rest)
+        broker = adapter
         return Orchestrator(config, db, store, ingestor, broker=broker)
+    from oq.storage.identity import bind_ledger
+
+    bind_ledger(db, store, config.app.mode, rest)
     return Orchestrator(config, db, store, ingestor, broker=InstantQuoteBroker())
 
 

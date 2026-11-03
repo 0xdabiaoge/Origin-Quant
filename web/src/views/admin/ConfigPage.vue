@@ -51,7 +51,7 @@ onMounted(async () => {
     </div>
 
     <p class="mt-3 text-[11px] leading-relaxed text-mute-500">
-      配置通过 config/*.toml 文件管理，不在界面里编辑。改配置需要重启进程，这样配置变更总是一个可审计的事件。
+      交易引擎配置通过 config/*.yaml 文件管理，当前页面仅供查看；配置变更需要重新加载或重启进程。
     </p>
   </div>
 </template>

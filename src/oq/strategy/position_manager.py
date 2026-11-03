@@ -57,10 +57,6 @@ class PositionManager:
         entry = position.avg_px
         if position.stop_px is None:
             return [self._close(position, ctx, "missing stop")]
-        r = abs(entry - position.stop_px)
-        if r <= ZERO:
-            return [self._close(position, ctx, "zero risk distance")]
-
         bars_held = self._bars_held(position, ctx)
 
         # 1. Hard stop against the bar range, not just the close.
@@ -68,6 +64,14 @@ class PositionManager:
             return [self._close(position, ctx, f"stop {position.stop_px}")]
         if not position.is_long and high >= position.stop_px:
             return [self._close(position, ctx, f"stop {position.stop_px}")]
+
+        # A migrated position may not retain its original stop. Do not invent
+        # an R value from a moved stop; its hard and time exits still apply.
+        if position.initial_stop_px is None or position.initial_stop_px == entry:
+            if bars_held >= (position.time_stop_bars or 32):
+                return [self._close(position, ctx, "time stop")]
+            return []
+        r = abs(entry - position.initial_stop_px)
 
         # 2. Take-profit ladder as fractions of the initial position.
         favourable = high if position.is_long else low

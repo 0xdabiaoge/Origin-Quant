@@ -54,7 +54,8 @@ async function run() {
         </button>
       </div>
       <p class="mt-3 text-[11px] leading-relaxed text-mute-500">
-        回测走的是与实盘完全相同的策略内核和风控链路，差异只在撮合器。
+        回测复用策略和部分风控、订单组件，但行情、成交和资金费均受模拟假设影响，不能等同实盘。
+        本地 Parquet 按最后一根已确认 K 线向前截取，数据来源及新鲜度需要自行核对；预热会减少有效交易区间。
       </p>
     </div>
 

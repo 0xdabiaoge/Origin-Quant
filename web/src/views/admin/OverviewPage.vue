@@ -32,8 +32,8 @@ function uptime(s: number): string {
 
     <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
       <StatCard label="版本" :value="data?.version ?? '—'" :hint="`模式 ${data?.mode ?? '—'}`" />
-      <StatCard label="运行时长" :value="data ? uptime(data.uptime_s) : '—'" :hint="data?.scheduler ? '调度器已启用' : '调度器未启用'" />
-      <StatCard label="事件总数" :value="String(data?.counts.events ?? 0)" :hint="data?.last_event_ms ? `最新 ${fmtAgo(data.last_event_ms)}` : ''" />
+      <StatCard label="运行时长" :value="data ? uptime(data.uptime_s) : '—'" :hint="!data ? '调度器状态未知' : data.scheduler ? '调度器已启用' : '调度器未启用'" />
+      <StatCard label="事件总数" :value="data?.counts.events === undefined ? '—' : String(data.counts.events)" :hint="data?.last_event_ms ? `最新 ${fmtAgo(data.last_event_ms)}` : ''" />
       <StatCard label="配置指纹" :value="data?.config_hash ? data.config_hash.slice(0, 10) : '—'" hint="配置变更会改变此指纹" />
     </div>
 
@@ -68,7 +68,7 @@ function uptime(s: number): string {
       <div class="grid grid-cols-2 gap-4 sm:grid-cols-5">
         <div>
           <div class="text-[11px] text-mute-500">成交笔数</div>
-          <div class="tnum mt-1 text-lg">{{ data?.stats.trades ?? 0 }}</div>
+          <div class="tnum mt-1 text-lg">{{ data?.stats.trades ?? '—' }}</div>
         </div>
         <div>
           <div class="text-[11px] text-mute-500">胜率</div>
