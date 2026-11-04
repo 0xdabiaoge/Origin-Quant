@@ -30,6 +30,8 @@ try {
   await page.screenshot({ path: resolve(output, "overview-desktop.png"), fullPage: true });
   assert(await page.locator("canvas").count() >= 3, "Overview should render market, equity and risk charts");
   await page.getByRole("link", { name: "行情终端" }).click();
+  await page.waitForURL(base + "/app/markets");
+  await page.getByRole("heading", { name: "行情终端", exact: true }).waitFor();
   const chart = page.getByRole("img", { name: /BTC-USDT-SWAP.*收盘 K 线/ });
   await chart.locator("canvas").waitFor();
   await page.screenshot({ path: resolve(output, "markets-desktop.png"), fullPage: true });
