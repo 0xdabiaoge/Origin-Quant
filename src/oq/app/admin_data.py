@@ -173,13 +173,11 @@ def event_feed(conn: sqlite3.Connection, limit: int = 200, since_id: int = 0) ->
 def decision_reason_histogram(conn: sqlite3.Connection, limit: int = 2000) -> list[dict]:
     return _rows(
         conn,
-        "SELECT gate, n FROM ("
-        "  SELECT gate, COUNT(*) AS n FROM ("
-        "    SELECT j.value->>'code' AS gate, approved"
-        "    FROM decisions, json_each(decisions.gates) AS j"
-        "    ORDER BY ts_ms DESC LIMIT ?"
-        "  ) WHERE approved = 0 GROUP BY gate ORDER BY n DESC LIMIT 20"
-        ")",
+        "SELECT j.value->>'code' AS gate, COUNT(*) AS n "
+        "FROM (SELECT approved, gates FROM decisions ORDER BY ts_ms DESC LIMIT ?) AS d, "
+        "json_each(d.gates) AS j "
+        "WHERE d.approved = 0 AND COALESCE(j.value->>'passed', j.value->>'ok') = 0 "
+        "GROUP BY gate ORDER BY n DESC, gate LIMIT 20",
         (limit,),
     )
 

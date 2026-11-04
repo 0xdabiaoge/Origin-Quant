@@ -5,6 +5,8 @@ import type { DecisionsPayload } from "@/api/types";
 import { fmtTime } from "@/api/format";
 import PageHeader from "@/components/PageHeader.vue";
 import EmptyState from "@/components/EmptyState.vue";
+import EChart from "@/components/EChart.vue";
+import type { EChartsOption } from "echarts";
 
 const data = ref<DecisionsPayload | null>(null);
 const err = ref("");
@@ -24,14 +26,20 @@ const rows = computed(() => {
 });
 
 const rejections = computed(() => data.value?.rejections ?? []);
-const maxReject = computed(() => Math.max(1, ...rejections.value.map((r) => r.n)));
+const rejectionOption = computed<EChartsOption>(() => ({
+  grid: { left: 118, right: 35, top: 10, bottom: 24 },
+  xAxis: { type: "value", minInterval: 1, axisLabel: { color: "#7b8da4", fontSize: 10 }, splitLine: { lineStyle: { color: "#1c2a3b" } } },
+  yAxis: { type: "category", inverse: true, data: rejections.value.map(r => r.gate), axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: "#9fb0c4", fontSize: 11 } },
+  tooltip: { trigger: "axis", renderMode: "richText", axisPointer: { type: "shadow" } },
+  series: [{ type: "bar", name: "拒绝次数", data: rejections.value.map(r => r.n), barMaxWidth: 16, itemStyle: { color: "#fb7185", borderRadius: [0, 4, 4, 0] }, label: { show: true, position: "right", color: "#9fb0c4", fontSize: 11 } }],
+}));
 
 function gatesText(raw: string): string {
   try {
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return "";
-    const failed = parsed.filter((g: { ok?: boolean }) => g.ok === false);
-    return failed.map((g: { code?: string; detail?: string }) => g.code ?? g.detail ?? "?").join(", ");
+    const failed = parsed.filter((g: { passed?: boolean; ok?: boolean }) => (g.passed ?? g.ok) === false);
+    return failed.map((g: { code?: string; reason?: string; detail?: string }) => `${g.code ?? '?'}${g.reason || g.detail ? ` · ${g.reason || g.detail}` : ''}`).join("；");
   } catch {
     return "";
   }
@@ -53,15 +61,8 @@ function gatesText(raw: string): string {
 
     <div v-if="rejections.length" class="card card-pad mb-3">
       <div class="label mb-3">拒绝原因分布</div>
-      <div class="space-y-2">
-        <div v-for="r in rejections" :key="r.gate" class="flex items-center gap-3">
-          <span class="tnum w-32 shrink-0 truncate text-xs text-mute-300">{{ r.gate || "(未标注)" }}</span>
-          <div class="h-1.5 flex-1 overflow-hidden rounded-full bg-ink-800">
-            <div class="h-full rounded-full bg-danger-500/70" :style="{ width: `${(r.n / maxReject) * 100}%` }" />
-          </div>
-          <span class="tnum w-10 shrink-0 text-right text-xs text-mute-400">{{ r.n }}</span>
-        </div>
-      </div>
+      <EChart :option="rejectionOption" :height="`${Math.max(140, rejections.length * 30 + 40)}px`" />
+      <p class="mt-2 text-[11px] text-mute-500">最近 2,000 条决策中实际未通过的闸门；一条决策可能有多个拒绝原因。</p>
     </div>
 
     <div class="card">

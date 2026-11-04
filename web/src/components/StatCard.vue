@@ -8,7 +8,7 @@ defineProps<{
 </script>
 
 <template>
-  <div class="card card-pad">
+  <div class="card card-pad stat-card">
     <div class="label">{{ label }}</div>
     <div
       class="stat mt-2"

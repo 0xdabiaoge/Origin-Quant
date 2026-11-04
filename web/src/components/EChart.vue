@@ -3,13 +3,14 @@
  *  ECharts is ~300kB, so it is only imported by views that actually chart. */
 import { onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
 import * as echarts from "echarts/core";
-import { LineChart, BarChart } from "echarts/charts";
+import { LineChart, BarChart, CandlestickChart } from "echarts/charts";
 import {
   GridComponent,
   TooltipComponent,
   LegendComponent,
   DataZoomComponent,
   MarkLineComponent,
+  AxisPointerComponent,
 } from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
 import type { EChartsOption } from "echarts";
@@ -17,17 +18,19 @@ import type { EChartsOption } from "echarts";
 echarts.use([
   LineChart,
   BarChart,
+  CandlestickChart,
   GridComponent,
   TooltipComponent,
   LegendComponent,
   DataZoomComponent,
   MarkLineComponent,
+  AxisPointerComponent,
   CanvasRenderer,
 ]);
 
 const props = withDefaults(
-  defineProps<{ option: EChartsOption; height?: string; loading?: boolean }>(),
-  { height: "280px", loading: false },
+  defineProps<{ option: EChartsOption; height?: string; loading?: boolean; resetKey?: string; label?: string }>(),
+  { height: "280px", loading: false, resetKey: "", label: "数据图表" },
 );
 
 const el = ref<HTMLDivElement | null>(null);
@@ -43,8 +46,15 @@ onMounted(() => {
 });
 
 watch(
-  () => props.option,
-  (opt) => chart.value?.setOption(opt, { notMerge: true }),
+  () => ({ option: props.option, key: props.resetKey }),
+  (next, previous) => {
+    if (!chart.value) return;
+    const zoom = next.key === previous.key
+      ? (chart.value.getOption() as { dataZoom?: { start: number; end: number }[] }).dataZoom?.map(z => ({ start: z.start, end: z.end }))
+      : undefined;
+    chart.value.setOption(next.option, { notMerge: true });
+    if (zoom?.length) chart.value.setOption({ dataZoom: zoom });
+  },
   { deep: true },
 );
 
@@ -72,5 +82,5 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div ref="el" :style="{ height, width: '100%' }" />
+  <div ref="el" role="img" :aria-label="label" :style="{ height, width: '100%' }" />
 </template>

@@ -63,6 +63,8 @@ export const api = {
 };
 
 export const v1 = {
+  marketSummary: () => api.get<{ items: import("./types").MarketQuote[]; now_ms: number; base_timeframe: string }>("/api/v1/app/market/summary"),
+  candles: (symbol: string, timeframe: string) => api.get<import("./types").CandlesPayload>(`/api/v1/app/market/candles?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}`),
   brand: () => api.get<import("./types").Brand>("/api/v1/public/brand"),
   metrics: () => api.get<import("./types").PublicMetrics>("/api/v1/public/metrics"),
   overview: () => api.get<import("./types").Overview>("/api/v1/app/overview"),

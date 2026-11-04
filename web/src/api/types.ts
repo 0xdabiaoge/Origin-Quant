@@ -3,6 +3,18 @@
 
 export type Money = string;
 
+export interface Candle {
+  ts_ms: number; open: number; high: number; low: number; close: number; volume: number;
+}
+export interface MarketQuote {
+  symbol: string; close: number | null; last_bar_ms: number | null; stale: boolean;
+  change_24h_pct: number | null; high_24h: number | null; low_24h: number | null; sparkline: number[];
+}
+export interface CandlesPayload {
+  symbol: string; timeframe: string; base_timeframe: string; items: Candle[];
+  now_ms: number; last_bar_ms: number | null; stale: boolean; source: string; confirmed_only: boolean;
+}
+
 export interface Brand {
   name: string;
   tagline: string;

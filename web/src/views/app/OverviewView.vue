@@ -7,6 +7,7 @@ import PageHeader from "@/components/PageHeader.vue";
 import StatCard from "@/components/StatCard.vue";
 import EmptyState from "@/components/EmptyState.vue";
 import EChart from "@/components/EChart.vue";
+import MarketTerminal from "@/components/MarketTerminal.vue";
 import { useToast } from "@/components/useToast";
 import { useAuthStore } from "@/stores/auth";
 import type { EChartsOption } from "echarts";
@@ -64,16 +65,21 @@ const firstPoint = computed(() => series.value[0]);
 const equityOption = computed<EChartsOption>(() => {
   const pts = series.value;
   return {
-    grid: { left: 0, right: 0, top: 10, bottom: 0, containLabel: false },
+    grid: { left: 64, right: 16, top: 20, bottom: 30 },
     xAxis: {
       type: "category",
-      show: false,
+      axisLabel: { color: "#71849c", fontSize: 10, formatter: (v: string) => new Date(Number(v)).toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit" }) },
+      axisLine: { show: false }, axisTick: { show: false },
       boundaryGap: false,
       data: pts.map((p) => p.ts_ms),
     },
-    yAxis: { type: "value", show: false, scale: true },
+    yAxis: { type: "value", scale: true,
+      min: v => v.min - Math.max(1, (v.max - v.min) * 0.1, Math.abs(v.min) * 0.001),
+      max: v => v.max + Math.max(1, (v.max - v.min) * 0.1, Math.abs(v.max) * 0.001),
+      axisLabel: { color: "#71849c", fontSize: 10 }, splitLine: { lineStyle: { color: "#1c2a3b", type: "dashed" } } },
     tooltip: {
       trigger: "axis",
+      renderMode: "richText",
       backgroundColor: "#0f141b",
       borderColor: "#1c2530",
       textStyle: { color: "#e8eef6", fontSize: 11 },
@@ -81,20 +87,34 @@ const equityOption = computed<EChartsOption>(() => {
         const arr = params as { dataIndex: number }[];
         const p = pts[arr?.[0]?.dataIndex ?? 0];
         if (!p) return "";
-        return `${fmtTime(p.ts_ms)}<br/>净值 <b>${fmtMoney(p.equity)}</b><br/>回撤 ${fmtPct(p.drawdown)}`;
+        return `${fmtTime(p.ts_ms)}\n净值 ${fmtMoney(p.equity)}\n回撤 ${fmtPct(p.drawdown)}`;
       },
     },
     series: [
       {
         type: "line",
         data: pts.map((p) => Number(p.equity)),
-        showSymbol: false,
-        lineStyle: { width: 1.6, color: "#34d399" },
+        showSymbol: pts.length === 1,
+        symbolSize: 6,
+        itemStyle: { color: "#34d399" },
+        lineStyle: { width: 2, color: "#34d399" },
         areaStyle: { color: "rgba(52,211,153,0.10)" },
       },
     ],
   };
 });
+
+const riskOption = computed<EChartsOption>(() => ({
+  grid: { left: 42, right: 12, top: 24, bottom: 20 },
+  legend: { top: 0, textStyle: { color: "#93a4ba", fontSize: 10 }, itemHeight: 3 },
+  tooltip: { trigger: "axis", renderMode: "richText", valueFormatter: (v: unknown) => `${Number(v).toFixed(2)}%` },
+  xAxis: { type: "category", show: false, data: series.value.map(p => fmtTime(p.ts_ms)) },
+  yAxis: { type: "value", min: 0, axisLabel: { color: "#71849c", fontSize: 9, formatter: "{value}%" }, splitLine: { lineStyle: { color: "#1c2a3b" } } },
+  series: [
+    { name: "回撤", type: "line", showSymbol: series.value.length === 1, data: series.value.map(p => Number(p.drawdown) * 100), lineStyle: { color: "#fb7185", width: 1.5 }, itemStyle: { color: "#fb7185" }, areaStyle: { color: "#fb718514" } },
+    { name: "风险热度", type: "line", showSymbol: series.value.length === 1, data: series.value.map(p => p.heat == null ? null : Number(p.heat) * 100), lineStyle: { color: "#60a5fa", width: 1.5 }, itemStyle: { color: "#60a5fa" } },
+  ],
+}));
 
 const sessionPnl = computed(() => {
   if (!lastPoint.value || !firstPoint.value) return null;
@@ -110,7 +130,7 @@ const dirCount = computed(() => positions.value.filter((p) => p.book !== "carry"
 
 <template>
   <div>
-    <PageHeader title="总览" :subtitle="`模式 ${data?.mode ?? '—'} · 版本 ${data?.version ?? '—'} · 最近周期 ${fmtAgo(data?.last_cycle_ms)}`">
+    <PageHeader title="交易总览" :subtitle="`市场、策略与账户，尽在掌握 · 最近周期 ${fmtAgo(data?.last_cycle_ms)}`">
       <template #actions>
         <button v-if="auth.can('trader')" class="btn" :disabled="busy" @click="runCycle">
           {{ busy ? "执行中…" : "手动跑一个周期" }}
@@ -145,18 +165,22 @@ const dirCount = computed(() => positions.value.filter((p) => p.book !== "carry"
       />
     </div>
 
-    <div class="mt-3 grid gap-3 lg:grid-cols-[1.6fr_1fr]">
+    <MarketTerminal class="mt-5" :positions="positions" compact />
+
+    <div class="mt-5 grid gap-4 lg:grid-cols-[1.6fr_1fr]">
       <div class="card card-pad">
         <div class="mb-1 flex items-center justify-between">
           <span class="label">净值曲线</span>
           <span class="text-[11px] text-mute-500">{{ series.length }} 个采样点</span>
         </div>
-        <EChart v-if="series.length > 1" :option="equityOption" height="230px" :loading="loading" />
+        <EChart v-if="series.length" :option="equityOption" height="270px" :loading="loading" />
+        <p v-if="series.length === 1" class="mt-2 text-[11px] text-mute-500">目前只有 1 个真实采样点，净值曲线将随交易周期逐步累计。</p>
         <EmptyState v-else title="还没有净值数据" hint="跑一个周期或等待调度器采样后，这里会出现曲线。" />
       </div>
 
       <div class="card card-pad">
-        <div class="label mb-3">交易统计</div>
+        <div class="label mb-3">风险与交易表现</div>
+        <EChart v-if="series.length" :option="riskOption" height="140px" />
         <dl class="space-y-2.5 text-sm">
           <div class="flex items-baseline justify-between">
             <dt class="text-mute-400">成交笔数</dt>

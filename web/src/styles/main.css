@@ -3,14 +3,14 @@
 /* Design tokens. One dark palette, one accent, one danger colour — the whole
    product is a numbers surface, so chrome stays quiet and data stays loud. */
 @theme {
-  --color-ink-950: #070a0e;
-  --color-ink-900: #0b0f14;
+  --color-ink-950: #080e17;
+  --color-ink-900: #0d1622;
   --color-ink-850: #0f141b;
   --color-ink-800: #141b24;
   --color-ink-700: #1c2530;
   --color-ink-600: #2a3644;
   --color-ink-500: #3d4b5c;
-  --color-mute-500: #5d6d80;
+  --color-mute-500: #7b8da4;
   --color-mute-400: #7d8ea3;
   --color-mute-300: #9fb0c4;
   --color-paper: #e8eef6;
@@ -70,7 +70,8 @@
 
 @layer components {
   .card {
-    @apply rounded-xl border border-ink-700 bg-ink-900/80 backdrop-blur-sm;
+    @apply rounded-2xl border border-ink-700 bg-ink-900/90;
+    box-shadow: 0 8px 32px -24px #000a, inset 0 1px 0 #ffffff03;
   }
 
   .card-pad {
@@ -121,7 +122,7 @@
   }
 
   .nav-link-active {
-    @apply bg-ink-800 text-paper shadow-[inset_2px_0_0_0_var(--color-accent-500)];
+    @apply bg-accent-500/10 text-accent-400 shadow-[inset_2px_0_0_0_var(--color-accent-500)];
   }
 
   .table-base {
@@ -137,4 +138,16 @@
   .table-base tbody tr:hover {
     @apply bg-ink-850/60;
   }
+}
+
+@layer components {
+  .eyebrow { @apply text-[9px] font-medium tracking-[0.22em] text-accent-400/80; }
+  .terminal-heading { @apply flex items-center justify-between gap-3 border-b border-ink-700/70 px-4 py-4 sm:px-5; background: linear-gradient(100deg, #34d39907, transparent 65%); }
+  .coin-avatar { @apply flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-accent-500/20 bg-accent-500/10 text-lg font-semibold text-accent-400; }
+  .chart-tab { @apply rounded-md px-2.5 py-1.5 text-[11px] text-mute-400 transition hover:bg-ink-700 hover:text-paper focus-visible:outline-2 focus-visible:outline-accent-500; }
+  .chart-tab-active { @apply bg-accent-500/10 text-accent-400; }
+  .watchlist-row { @apply w-full border-l-2 border-transparent px-4 py-3 text-left transition hover:bg-ink-800/80 focus-visible:outline-2 focus-visible:outline-accent-500; }
+  .watchlist-selected { @apply border-accent-500 bg-accent-500/5; }
+  .stat-card { position: relative; overflow: hidden; background: linear-gradient(135deg, #142437a0, #0d1622 75%); }
+  .stat-card::after { content: ""; position: absolute; width: 100px; height: 100px; right: -45px; top: -45px; border-radius: 100%; border: 1px solid #6ee7b710; box-shadow: 0 0 0 16px #6ee7b704, 0 0 0 32px #6ee7b702; pointer-events: none; }
 }

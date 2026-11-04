@@ -13,6 +13,7 @@ const mode = ref("");
 const version = ref("");
 
 const nav = [
+  { name: "app-markets", label: "行情终端", icon: "M4 5v14m4-11v6m4-11v18m4-14v10m4-12v12" },
   { name: "app-overview", label: "总览", icon: "M3 12h4l3 8 4-16 3 8h4" },
   { name: "app-positions", label: "持仓", icon: "M4 6h16M4 12h16M4 18h10" },
   { name: "app-orders", label: "订单 / 成交", icon: "M6 3h9l3 3v15H6zM9 12h6M9 16h6" },
@@ -48,7 +49,7 @@ const roleLabel = computed(
     <!-- sidebar -->
     <aside
       class="fixed inset-y-0 left-0 z-40 w-60 shrink-0 border-r border-ink-800 bg-ink-900
-             transition-transform lg:static lg:translate-x-0"
+             h-screen transition-transform lg:sticky lg:top-0 lg:translate-x-0"
       :class="open ? 'translate-x-0' : '-translate-x-full'"
     >
       <div class="flex h-14 items-center gap-2.5 border-b border-ink-800 px-4">
@@ -69,7 +70,8 @@ const roleLabel = computed(
         </div>
       </div>
 
-      <nav class="flex flex-col gap-0.5 p-2.5">
+      <div class="px-5 pt-6 pb-2 text-[10px] tracking-[0.2em] text-mute-500">TRADING WORKSPACE</div>
+      <nav class="flex max-h-[calc(100vh-235px)] flex-col gap-1 overflow-y-auto p-2.5">
         <RouterLink
           v-for="item in nav"
           :key="item.name"
@@ -125,13 +127,14 @@ const roleLabel = computed(
 
     <!-- main -->
     <div class="flex min-w-0 flex-1 flex-col">
-      <header class="flex h-14 items-center gap-3 border-b border-ink-800 px-4 lg:hidden">
-        <button class="btn btn-ghost px-2" @click="open = !open">
+      <header class="flex h-14 items-center gap-3 border-b border-ink-800 bg-ink-900/50 px-4 sm:px-6">
+        <button class="btn btn-ghost px-2 lg:hidden" aria-label="打开导航" @click="open = !open">
           <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M4 7h16M4 12h16M4 17h16" stroke-linecap="round" />
           </svg>
         </button>
-        <span class="text-sm font-semibold">Origin Quant</span>
+        <span class="text-xs text-mute-500">工作台 <span class="mx-2 text-ink-500">/</span><span class="text-mute-300">{{ nav.find(n => n.name === route.name)?.label ?? '交易系统' }}</span></span>
+        <div class="ml-auto flex items-center gap-3 text-[11px]"><span class="chip border border-ink-600 bg-ink-800 text-mute-300">{{ mode === 'paper' ? '模拟交易' : mode === 'live' ? '实盘模式' : mode || '未知模式' }}</span><span class="hidden text-mute-500 sm:inline">v{{ version || '—' }}</span></div>
       </header>
 
       <main class="flex-1 px-4 py-5 sm:px-6 sm:py-6">

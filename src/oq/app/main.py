@@ -175,6 +175,9 @@ def build_app(config: Config | None = None, *, start_scheduler: bool | None = No
     app.state.oq = ctx
     app.include_router(router, prefix="/api")
     app.include_router(v1_router, prefix="/api/v1")
+    from oq.app.market_api import router as market_router
+
+    app.include_router(market_router, prefix="/api/v1")
     from oq.app.ai_api import router as ai_router
 
     app.include_router(ai_router, prefix="/api/v1")

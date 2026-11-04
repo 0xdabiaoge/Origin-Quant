@@ -12,6 +12,7 @@ const router = createRouter({
       component: () => import("@/layouts/AppLayout.vue"),
       meta: { requiresAuth: true },
       children: [
+        { path: "markets", name: "app-markets", component: () => import("@/views/app/MarketsView.vue") },
         { path: "", name: "app-overview", component: () => import("@/views/app/OverviewView.vue") },
         { path: "positions", name: "app-positions", component: () => import("@/views/app/PositionsView.vue") },
         { path: "orders", name: "app-orders", component: () => import("@/views/app/OrdersView.vue") },
