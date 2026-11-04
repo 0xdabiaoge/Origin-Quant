@@ -6,21 +6,25 @@
  * break a SPA without changing an HTTP status code.
  */
 import { chromium } from "playwright-core";
+import { readFileSync } from "node:fs";
 
 const CHROME =
   process.env.OQ_CHROME ||
   process.env.CHROME_PATH ||
   "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
-const BASE = process.env.OQ_BASE || "https://www.kairosigma.eu.cc";
-const PASSWORD = process.env.OQ_PASSWORD || "";
+const BASE = process.env.OQ_BASE || "http://127.0.0.1:8017";
+const PASSWORD = process.env.OQ_PASSWORD_FILE
+  ? readFileSync(process.env.OQ_PASSWORD_FILE, "utf8").trim()
+  : process.env.OQ_PASSWORD || "";
 
 const PUBLIC_ROUTES = [
-  ["/", ["Origin Quant", "一个操作员"]],
+  ["/", ["Origin Quant", "让每一次决策"]],
   ["/docs", ["使用文档", "快速开始"]],
 ];
 
 const APP_ROUTES = [
   ["/app", ["总览", "净值"]],
+  ["/app/markets", ["行情终端", "行情工作台"]],
   ["/app/positions", ["持仓", "套利账本"]],
   ["/app/orders", ["订单 / 成交"]],
   ["/app/decisions", ["决策流水"]],
@@ -30,6 +34,10 @@ const APP_ROUTES = [
 
 const ADMIN_ROUTES = [
   ["/admin", ["系统概览", "表记录数"]],
+  ["/admin/ai", ["AI 模型与决策"]],
+  ["/admin/news", ["新闻情报"]],
+  ["/admin/venue", ["交易所状态"]],
+  ["/admin/notifications", ["风险通知"]],
   ["/admin/users", ["用户", "新建用户"]],
   ["/admin/audit", ["审计日志"]],
   ["/admin/config", ["配置", "路径"]],
